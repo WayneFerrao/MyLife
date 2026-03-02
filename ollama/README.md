@@ -23,7 +23,7 @@ Shared local model server for running LLMs on your own hardware. Ollama provides
 3. Pull a model:
 
    ```sh
-   docker compose exec ollama ollama pull llama3.2
+   docker compose exec ollama ollama pull <model>
    ```
 
 4. Verify the model is available:
