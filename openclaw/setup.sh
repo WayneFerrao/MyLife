@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+REPO_ROOT="$(cd .. && pwd)"
+
 # ── Preflight checks ────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   echo "Error: Docker is not installed. See https://docs.docker.com/get-docker/"
@@ -41,6 +43,67 @@ if grep -q '<your-anthropic-api-key>' .env; then
   echo "Edit .env and add at least one API key before starting the gateway."
   echo "See the Model Providers section in README.md for options."
   echo ""
+fi
+
+# ── Prompt for OpenAI API key (required for TypeAgent memory plugin) ──────────
+if grep -q '<your-openai-api-key>' .env || ! grep -qE '^OPENAI_API_KEY=.+' .env; then
+  echo ""
+  read -r -p "Enter your OpenAI API key (required for TypeAgent memory plugin, sk-...): " OPENAI_KEY
+  if [ -n "$OPENAI_KEY" ]; then
+    if grep -q '<your-openai-api-key>' .env; then
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|OPENAI_API_KEY=<your-openai-api-key>|OPENAI_API_KEY=$OPENAI_KEY|" .env
+      else
+        sed -i "s|OPENAI_API_KEY=<your-openai-api-key>|OPENAI_API_KEY=$OPENAI_KEY|" .env
+      fi
+    else
+      echo "OPENAI_API_KEY=$OPENAI_KEY" >> .env
+    fi
+    echo "OpenAI API key saved to .env"
+  else
+    echo "Skipped — TypeAgent memory plugin will not work until OPENAI_API_KEY is set in .env"
+  fi
+  echo ""
+fi
+
+# ── Clone TypeAgent and install plugin deps ───────────────────────────────────
+TYPEAGENT_DIR="$REPO_ROOT/typeagent/ts"
+PLUGIN_DIR="./config/plugins/typeagent-memory"
+
+if [ -d "$PLUGIN_DIR" ]; then
+  echo "Setting up TypeAgent memory plugin..."
+
+  # Shallow-clone TypeAgent if not already present (ignored by git, never committed)
+  if [ ! -d "$REPO_ROOT/typeagent/.git" ]; then
+    echo "Cloning TypeAgent (shallow)..."
+    git clone --depth=1 https://github.com/microsoft/TypeAgent.git "$REPO_ROOT/typeagent"
+    echo "TypeAgent cloned."
+  else
+    echo "TypeAgent already cloned."
+  fi
+
+  # Build TypeAgent packages if not already built
+  if [ ! -d "$TYPEAGENT_DIR/packages/knowPro/dist" ] || \
+     [ ! -d "$TYPEAGENT_DIR/packages/memory/conversation/dist" ]; then
+    echo "Building TypeAgent (this takes a few minutes on first run)..."
+    if ! command -v pnpm &>/dev/null; then
+      echo "Error: pnpm is required to build TypeAgent. Install it with: npm install -g pnpm"
+      exit 1
+    fi
+    (cd "$TYPEAGENT_DIR" && pnpm install --frozen-lockfile && pnpm build)
+    echo "TypeAgent built."
+  else
+    echo "TypeAgent already built."
+  fi
+
+  # Install plugin npm deps (copies TypeAgent packages into node_modules)
+  if [ ! -d "$PLUGIN_DIR/node_modules/conversation-memory" ]; then
+    echo "Installing plugin dependencies..."
+    (cd "$PLUGIN_DIR" && npm install --omit=dev)
+    echo "Plugin dependencies installed."
+  else
+    echo "Plugin dependencies already installed."
+  fi
 fi
 
 # ── Run onboarding wizard ────────────────────────────────────────────────────

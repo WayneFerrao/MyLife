@@ -1,0 +1,40 @@
+{
+  "id": "typeagent-memory",
+  "kind": "memory",
+  "uiHints": {
+    "openaiApiKey": {
+      "label": "OpenAI API Key",
+      "sensitive": true,
+      "placeholder": "sk-...",
+      "help": "Required for TypeAgent entity/topic/action extraction (GPT-4o). Supports ${OPENAI_API_KEY}."
+    },
+    "openaiModel": {
+      "label": "Model",
+      "placeholder": "gpt-4o",
+      "help": "Model used for knowledge extraction. GPT-4o recommended; other models not guaranteed."
+    },
+    "openaiBaseUrl": {
+      "label": "Base URL",
+      "placeholder": "https://api.openai.com/v1",
+      "help": "Override for Azure OpenAI or compatible endpoints.",
+      "advanced": true
+    },
+    "dataDir": {
+      "label": "Data directory",
+      "placeholder": "~/.openclaw/typeagent-memory",
+      "help": "Where ConversationMemory persists its SQLite index.",
+      "advanced": true
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "openaiApiKey": { "type": "string" },
+      "openaiModel": { "type": "string" },
+      "openaiBaseUrl": { "type": "string" },
+      "dataDir": { "type": "string" }
+    },
+    "required": ["openaiApiKey"]
+  }
+}

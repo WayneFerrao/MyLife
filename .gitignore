@@ -1,6 +1,8 @@
 .env
 library/
 postgres/
-config/
+openclaw/config/*
+!openclaw/config/plugins/
 workspace/
 models/
+typeagent/
