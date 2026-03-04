@@ -4,3 +4,4 @@ postgres/
 config/
 workspace/
 models/
+qdrant_data/
