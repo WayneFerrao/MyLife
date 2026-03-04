@@ -61,7 +61,8 @@ echo
 echo "  3. Verify the service is healthy:"
 echo "       curl http://localhost:18790/health"
 echo
-echo "  4. (Optional) Seed test data — first set ALLOW_SEED=true in .env, then:"
-echo "       docker compose restart"
+echo "  4. (Optional) Seed test data"
+echo "       Manually set ALLOW_SEED=true in .env"
+echo "       docker compose down; docker compose up -d --force-recreate"
 echo "       curl -X POST http://localhost:18790/seed -H 'X-Api-Key: $RAG_API_KEY'"
 echo

@@ -14,13 +14,17 @@ Designed as a reusable, hands-on blueprint — experiment, extend, and adapt you
    - After installing, Ollama should be running. Test with `curl http://localhost:11434/api/tags` (won't have any models yet)
 
 2. **Pull models**
-   - Chat model: `ollama pull llama3.2`
-   - Embedding model: `ollama pull nomic-embed-text`
-   - Check `curl http://localhost:11434/api/tags` again, `Content` should include a "models" array now.
+   - Chat model (showing recommended model): `ollama pull qwen3.5:9b`
+   - Embedding model (showing recommended model): `ollama pull nomic-embed-text`
+   - IMPORTANT: If you choose a different model from default, update EMBED_MODEL and/or CHAT_MODEL in [rag/.env](rag/.env).
+   - Check `curl http://localhost:11434/api/tags` again, `Content` should include a populated "models" array now.
 
 3. **Configure OpenClaw to use Ollama** — edit `openclaw/config/openclaw.json`:
-   - Set `agents.defaults.model.primary` to `"ollama/<model>:<version>"`, e.g. `"ollama/llama3.2:latest"`
-   - Add a `"models"` object (sibling to `"agents"`):
+
+    NOTE: This must be done manually for Ollama, as opposed to using other LLM providers which are supported via [`openclaw onboard`](https://openclaw.im/docs/cli/onboard)
+
+   - Set `agents.defaults.model.primary` to `"ollama/<model>:<version>"`, e.g. `"ollama/qwen3.5:9b"`
+   - Add a `"models"` object (sibling to `"agents"`) like this (using defaults as shown):
 
      ```json
      "models": {
@@ -32,8 +36,8 @@ Designed as a reusable, hands-on blueprint — experiment, extend, and adapt you
            "api": "ollama",
            "models": [
              {
-               "id": "llama3.2:latest",
-               "name": "llama3.2:latest",
+               "id": "qwen3.5:9b",
+               "name": "qwen3.5:9b",
                "reasoning": false,
                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
                "contextWindow": 16192,

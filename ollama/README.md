@@ -24,7 +24,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 ### Verify
 
 ```sh
-ollama pull llama3.2
+ollama pull qwen3.5:9b
 ollama list
 curl http://localhost:11434/api/tags
 ```
@@ -36,7 +36,7 @@ A `docker-compose.yml` is included if you prefer containerized deployment (e.g.,
 ```sh
    cp .env-example .env
    docker compose up -d
-   docker compose exec ollama ollama pull llama3.2
+   docker compose exec ollama ollama pull qwen3.5:9b
 ```
 
 See `.env-example` for available performance tuning options (flash attention, KV cache quantization).
@@ -45,7 +45,7 @@ See `.env-example` for available performance tuning options (flash attention, KV
 
 | Model | Size | Use Case |
 | ----- | ---- | -------- |
-| `llama3.2` | 3B | Lightweight general-purpose, fast on most hardware |
+| `llama3.2` | 3B | Lightweight general-purpose, fast on most hardware but not the best quality |
 | `llama3.2:1b` | 1B | Minimal footprint for testing and low-resource machines |
 | `qwen3:14b` | 14B | Strong balance of quality and performance |
 | `deepseek-r1:32b` | 32B | Best reasoning capability, requires 24+ GB VRAM |
