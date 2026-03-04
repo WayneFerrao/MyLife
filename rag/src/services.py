@@ -30,11 +30,25 @@ METADATA_SCHEMA = {
         "topic": {"type": "string"},
         "people": {"type": "array", "items": {"type": "string"}},
         "locations": {"type": "array", "items": {"type": "string"}},
-        "dates_mentioned": {"type": "array", "items": {"type": "string"}},
+        "dates_mentioned": {"type": "array", "items": {"type": "string"}}, # if no dates are mentioned, include the current date so you know when smth happened
         "mood": {"type": "string"},
         "tags": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["topic", "tags"],
+}
+
+QUERY_FILTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "people": {"type": "array", "items": {"type": "string"}},
+        "locations": {"type": "array", "items": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "time_sort": {
+            "type": "string",
+            "enum": ["newest_first", "oldest_first", "relevance"],
+        },
+    },
+    "required": ["people", "locations", "tags", "time_sort"],
 }
 
 SEED_NOTES = [
@@ -161,3 +175,73 @@ async def ensure_collection():
     )
     resp.raise_for_status()
     log.info("Created Qdrant collection '%s'", COLLECTION)
+
+
+async def extract_query_filters(text: str) -> dict:
+    """Extract structured filter hints from a search query using the chat model.
+
+    Identifies people, locations, and tags mentioned in the query so Qdrant
+    payload filters can narrow results before vector ranking.  Also determines
+    whether results should be sorted by time rather than pure relevance.
+
+    Args:
+        text: The natural-language search query.
+
+    Returns:
+        A dict with keys: people, locations, tags (all list[str]) and
+        time_sort ("newest_first", "oldest_first", or "relevance").
+    """
+    resp = await http.post(
+        f"{OLLAMA_URL}/api/chat",
+        json={
+            "model": CHAT_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract search filters from this query. Return JSON with: "
+                        "people (list of person names or relationships like 'son', 'mom'), "
+                        "locations (list of place names), "
+                        "tags (list of short topic keywords that would help find relevant notes), "
+                        "time_sort ('newest_first' if the query asks about recent/last events, "
+                        "'oldest_first' if it asks about earliest/first events, "
+                        "'relevance' otherwise). "
+                        "Return empty lists if no specific filters are found."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            "format": QUERY_FILTER_SCHEMA,
+            "stream": False,
+            "options": {"temperature": 0},
+        },
+    )
+    resp.raise_for_status()
+    return json.loads(resp.json()["message"]["content"])
+
+
+def build_qdrant_filter(filters: dict) -> dict | None:
+    """Convert extracted query filters into a Qdrant filter clause.
+
+    Builds ``should`` conditions (OR logic) so results matching *any*
+    extracted entity are included.  Returns None when no meaningful
+    filters were extracted, letting the query fall back to pure vector
+    similarity.
+
+    Args:
+        filters: Output of :func:`extract_query_filters`.
+
+    Returns:
+        A Qdrant filter dict with a ``should`` clause, or None if no
+        conditions were generated.
+    """
+    conditions = []
+    for person in filters.get("people", []):
+        conditions.append({"key": "metadata.people", "match": {"value": person}})
+    for location in filters.get("locations", []):
+        conditions.append({"key": "metadata.locations", "match": {"value": location}})
+    for tag in filters.get("tags", []):
+        conditions.append({"key": "metadata.tags", "match": {"value": tag}})
+    if not conditions:
+        return None
+    return {"should": conditions}

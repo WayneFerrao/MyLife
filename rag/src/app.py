@@ -25,9 +25,11 @@ from .services import (
     OLLAMA_URL,
     QDRANT_URL,
     SEED_NOTES,
+    build_qdrant_filter,
     embed,
     ensure_collection,
     extract_metadata,
+    extract_query_filters,
     http,
     log,
     verify_api_key,
@@ -72,7 +74,6 @@ async def handle_connect_error(request, exc):
     target = "Ollama" if "11434" in str(exc) else "Qdrant" if "6333" in str(exc) else "dependency"
     raise HTTPException(status_code=503, detail=f"{target} is unavailable")
 
-
 @app.exception_handler(httpx.TimeoutException)
 async def handle_timeout(request, exc):
     """Handle upstream request timeouts.
@@ -86,9 +87,7 @@ async def handle_timeout(request, exc):
     """
     raise HTTPException(status_code=504, detail="Upstream request timed out")
 
-
 # ── Endpoints ───────────────────────────────────────────────────────
-
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
@@ -151,27 +150,49 @@ async def ingest(req: IngestRequest):
 
 @app.post("/query", response_model=QueryResponse, dependencies=[Depends(verify_api_key)])
 async def query(req: QueryRequest):
-    """Search stored notes by semantic similarity to the query text.
+    """Search stored notes using semantic similarity plus structured filters.
 
-    Embeds the query with the "search_query" prefix and performs a
-    cosine similarity search against all stored note vectors in Qdrant.
+    1. Extracts filter hints (people, locations, tags, time preference)
+       from the query via the chat model.
+    2. Embeds the query with the "search_query" prefix.
+    3. Searches Qdrant with the vector *and* any payload filters (OR logic),
+       so results matching mentioned entities are prioritised.
+    4. Re-sorts by created_at when the query implies a time preference
+       (e.g. "last", "most recent", "first").
+
+    Falls back to pure vector similarity if filter extraction fails.
 
     Args:
         req: QueryRequest with the search text and optional limit.
 
     Returns:
-        QueryResponse: list of QueryResult objects ordered by relevance score.
+        QueryResponse: list of QueryResult objects ordered by relevance.
 
     Raises:
         httpx.HTTPStatusError: If Qdrant query fails.
     """
+    # Extract structured filters from the query (best-effort).
+    try:
+        filters = await extract_query_filters(req.text)
+        log.info("Query filters: %s", filters)
+    except Exception:
+        log.warning("Query filter extraction failed, using pure vector search")
+        filters = {}
+
     vector = await embed(req.text, prefix="search_query")
+
+    qdrant_body: dict = {"query": vector, "with_payload": True, "limit": req.limit}
+    qdrant_filter = build_qdrant_filter(filters)
+    if qdrant_filter:
+        qdrant_body["filter"] = qdrant_filter
+
     resp = await http.post(
         f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
-        json={"query": vector, "with_payload": True, "limit": req.limit},
+        json=qdrant_body,
     )
     resp.raise_for_status()
     points = resp.json().get("points", [])
+
     results = [
         QueryResult(
             id=p["id"],
@@ -181,6 +202,15 @@ async def query(req: QueryRequest):
         )
         for p in points
     ]
+
+    # Re-sort by time when the query implies recency/chronology.
+    time_sort = filters.get("time_sort", "relevance")
+    if time_sort != "relevance" and results:
+        results.sort(
+            key=lambda r: r.metadata.get("dates_mentioned", [""])[0] if r.metadata.get("dates_mentioned") else "",
+            reverse=(time_sort == "newest_first"),
+        )
+
     return QueryResponse(results=results)
 
 
