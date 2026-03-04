@@ -1,6 +1,36 @@
 name: openclaw
 
 services:
+  typeagent-build:
+    image: node:22-alpine
+    volumes:
+      - ${TYPEAGENT_DIR:-../typeagent}:/typeagent
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache git
+        npm install -g pnpm --quiet
+        git config --global --add safe.directory /typeagent
+        if [ ! -d /typeagent/.git ]; then
+          echo "[typeagent] cloning..."
+          git clone --depth=1 https://github.com/microsoft/TypeAgent.git /typeagent
+        fi
+        CURRENT_HASH=$$(git -C /typeagent rev-parse HEAD)
+        STORED_HASH=$$(cat /typeagent/.openclaw-built 2>/dev/null || echo "")
+        if [ "$$CURRENT_HASH" = "$$STORED_HASH" ]; then
+          echo "[typeagent] already built at $$CURRENT_HASH, skipping"
+          exit 0
+        fi
+        echo "[typeagent] building at $$CURRENT_HASH..."
+        cd /typeagent/ts
+        pnpm install --no-frozen-lockfile --ignore-scripts
+        pnpm exec fluid-build -t build knowpro conversation-memory
+        echo "$$CURRENT_HASH" > /typeagent/.openclaw-built
+        echo "[typeagent] build complete — restart openclaw-gateway to activate"
+
   openclaw-gateway:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     ports:
@@ -13,9 +43,48 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-./config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-./workspace}:/home/node/.openclaw/workspace
+      - ${OPENCLAW_EXTENSIONS_DIR:-./extensions}:/home/node/extensions
+      - ${TYPEAGENT_DIR:-../typeagent}:/home/node/typeagent
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: node dist/index.js gateway --bind ${OPENCLAW_GATEWAY_BIND:-lan} --port 18789
+    command:
+      - sh
+      - -c
+      - |
+        for dir in /home/node/extensions/*/; do
+          if [ -f "$${dir}package.json" ] && grep -q '"dependencies"' "$${dir}package.json" 2>/dev/null; then
+            echo "[startup] installing npm deps: $$dir"
+            (cd "$$dir" && npm install --omit=dev) || true
+          fi
+          echo "[startup] installing plugin: $$dir"
+          node dist/index.js plugins install -l "$$dir" || true
+        done
+        (
+          while true; do
+            sleep 15
+            if [ -f /home/node/typeagent/.openclaw-built ]; then
+              NEEDS_INSTALL=0
+              for dir in /home/node/extensions/*/; do
+                if [ -f "$${dir}package.json" ] && grep -q '"dependencies"' "$${dir}package.json" 2>/dev/null; then
+                  if [ ! -d "$${dir}node_modules/conversation-memory" ]; then
+                    NEEDS_INSTALL=1
+                    break
+                  fi
+                fi
+              done
+              if [ "$$NEEDS_INSTALL" = "1" ]; then
+                echo "[watcher] TypeAgent ready — installing plugin deps and restarting gateway..."
+                for dir in /home/node/extensions/*/; do
+                  if [ -f "$${dir}package.json" ] && grep -q '"dependencies"' "$${dir}package.json" 2>/dev/null; then
+                    (cd "$$dir" && npm install --omit=dev) || true
+                  fi
+                done
+                kill 1
+              fi
+            fi
+          done
+        ) &
+        exec node dist/index.js gateway --bind ${OPENCLAW_GATEWAY_BIND:-lan} --port 18789
     restart: unless-stopped
     init: true
     healthcheck:

@@ -5,3 +5,5 @@ config/
 workspace/
 models/
 qdrant_data/
+typeagent/
+openclaw/extensions/*/node_modules/

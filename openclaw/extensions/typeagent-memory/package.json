@@ -1,0 +1,17 @@
+{
+  "name": "@openclaw/typeagent-memory",
+  "version": "2026.3.3",
+  "private": true,
+  "description": "OpenClaw plugin: structured memory via TypeAgent KnowPro (entity/topic/action extraction)",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "knowpro": "file:../../typeagent/ts/packages/knowPro",
+    "conversation-memory": "file:../../typeagent/ts/packages/memory/conversation"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

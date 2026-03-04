@@ -1,0 +1,40 @@
+{
+  "id": "typeagent-memory",
+  "kind": "memory",
+  "uiHints": {
+    "openaiBaseUrl": {
+      "label": "Chat completions endpoint",
+      "placeholder": "http://host.docker.internal:11434/v1/chat/completions",
+      "help": "Full chat completions URL. Defaults to local Ollama. Use https://api.openai.com/v1/chat/completions for OpenAI."
+    },
+    "openaiModel": {
+      "label": "Model",
+      "placeholder": "llama3.2",
+      "help": "Model for knowledge extraction. Defaults to llama3.2 (Ollama). Use gpt-4o for OpenAI."
+    },
+    "openaiApiKey": {
+      "label": "API Key",
+      "sensitive": true,
+      "placeholder": "ollama",
+      "help": "API key. Leave unset for Ollama (no key needed). Set to sk-... for OpenAI. Supports ${OPENAI_API_KEY}.",
+      "advanced": true
+    },
+    "dataDir": {
+      "label": "Data directory",
+      "placeholder": "~/.openclaw/typeagent-memory",
+      "help": "Where ConversationMemory persists its SQLite index.",
+      "advanced": true
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "openaiBaseUrl": { "type": "string" },
+      "openaiModel": { "type": "string" },
+      "openaiApiKey": { "type": "string" },
+      "dataDir": { "type": "string" }
+    },
+    "required": []
+  }
+}
