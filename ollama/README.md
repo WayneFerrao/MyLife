@@ -2,35 +2,44 @@
 
 Shared local model server for running LLMs on your own hardware. Ollama provides a simple API for pulling, managing, and serving open-weight models. Other services in this project (like OpenClaw) connect to Ollama to use local models instead of — or alongside — cloud provider APIs.
 
-## Prerequisites
+## Install (Recommended: Native)
 
-- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+Running Ollama natively gives you the simplest CLI experience (`ollama pull`, `ollama run` — no prefix), direct GPU access (Metal on Apple Silicon, CUDA on Linux), and system-wide availability for editor integrations and other tools.
 
-## Setup
+OpenClaw's `OLLAMA_BASE_URL=http://host.docker.internal:11434` reaches a native Ollama install the same way it reaches a Dockerized one — the port is identical, no config changes needed.
 
-1. Create your `.env` file from the example:
+### macOS
 
-   ```sh
+```sh
+brew install ollama
+brew services start ollama
+```
+
+### Linux
+
+```sh
+curl -fsSL https://ollama.com/install.sh | sh
+```
+
+### Verify
+
+```sh
+ollama pull llama3.2
+ollama list
+curl http://localhost:11434/api/tags
+```
+
+## Docker Alternative
+
+A `docker-compose.yml` is included if you prefer containerized deployment (e.g., on a shared server or for reproducibility). Note that on macOS, Docker cannot access Metal, so Ollama will run CPU-only inside a container.
+
+```sh
    cp .env-example .env
-   ```
-
-2. Start the service:
-
-   ```sh
    docker compose up -d
-   ```
+   docker compose exec ollama ollama pull llama3.2
+```
 
-3. Pull a model:
-
-   ```sh
-   docker compose exec ollama ollama pull <model>
-   ```
-
-4. Verify the model is available:
-
-   ```sh
-   curl http://localhost:11434/api/tags
-   ```
+See `.env-example` for available performance tuning options (flash attention, KV cache quantization).
 
 ## Recommended Models
 
@@ -41,44 +50,36 @@ Shared local model server for running LLMs on your own hardware. Ollama provides
 | `qwen3:14b` | 14B | Strong balance of quality and performance |
 | `deepseek-r1:32b` | 32B | Best reasoning capability, requires 24+ GB VRAM |
 
-Choose a model based on available hardware. See the [hardware requirements](#hardware-notes) section below.
+For embeddings, consider `nomic-embed-text` or `mxbai-embed-large`.
+
+Choose a model based on available hardware. See the [hardware notes](#hardware-notes) section below.
 
 ## Storage
 
-| Path | Purpose | Configured via |
-| ---- | ------- | -------------- |
-| `./models` | Downloaded model weights and metadata | Volume mount in docker-compose.yml |
-
-The `models/` directory is created automatically on first run and excluded from version control via `.gitignore`. Model files can be several gigabytes each.
+When running natively, models are stored in `~/.ollama/models/`. When running via Docker, models are stored in `./models/` (mapped as a volume, excluded from version control via `.gitignore`).
 
 ## Common Commands
 
 ```sh
-# Start the service
-docker compose up -d
-
-# Stop the service
-docker compose down
-
-# View logs
-docker compose logs -f
-
 # Pull a model
-docker compose exec ollama ollama pull <model-name>
+ollama pull <model-name>
 
 # List downloaded models
-docker compose exec ollama ollama list
+ollama list
 
 # Remove a model
-docker compose exec ollama ollama rm <model-name>
+ollama rm <model-name>
 
 # Test a model directly
-docker compose exec ollama ollama run <model-name> "Hello, world"
+ollama run <model-name> "Hello, world"
+
+# Check service status (macOS)
+brew services info ollama
 ```
 
 ## Connecting Other Services
 
-Other Docker services in this project reach Ollama at `http://host.docker.internal:11434` (Docker Desktop on macOS/Windows) or via `extra_hosts` mapping on Linux. See the OpenClaw README for specific connection instructions.
+Other Docker services in this project (like OpenClaw) reach Ollama at `http://host.docker.internal:11434` on macOS/Windows, or via `extra_hosts` mapping on Linux. This works the same whether Ollama is running natively or in Docker — the port is identical. See the OpenClaw README for specific connection instructions.
 
 ## Hardware Notes
 
@@ -93,19 +94,8 @@ Ollama runs on CPU by default. For faster inference, a dedicated GPU is recommen
 
 ### GPU Support
 
-For GPU acceleration with Docker, you need the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). Once installed, add the following to `docker-compose.yml` under the `ollama` service:
-
-```yaml
-deploy:
-  resources:
-    reservations:
-      devices:
-        - driver: nvidia
-          count: all
-          capabilities: [gpu]
-```
-
-Apple Silicon (M1/M2/M3/M4) Macs use the Metal GPU automatically — no extra configuration needed when running Ollama natively. When running inside Docker on macOS, Ollama will use CPU only since Docker containers cannot access Metal.
+- **Apple Silicon (M1/M2/M3/M4):** Metal GPU is used automatically when running natively. Docker cannot access Metal — this is a key reason to prefer a native install on macOS.
+- **NVIDIA (Linux):** Native installs detect CUDA automatically. For Docker, install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) and add GPU reservations to `docker-compose.yml`.
 
 ## Further Reading
 
