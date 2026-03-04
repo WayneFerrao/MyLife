@@ -15,9 +15,9 @@ The agent learns when and how to use the service through a **skill** (`SKILL.md.
 
 ## Prerequisites
 
-- **Ollama** running with models pulled:
+- **Ollama** running with models pulled, for example:
   - `nomic-embed-text` (embeddings)
-  - `qwen3.5:9b` (metadata extraction — or whichever chat model you use)
+  - `qwen3.5:9b` (metadata extraction)
 - **Qdrant** running (see `../qdrant/`)
 - **OpenClaw** running (see `../openclaw/`)
 

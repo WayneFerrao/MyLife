@@ -47,10 +47,10 @@ Running `docker compose up -d` starts a single container: **openclaw-gateway**. 
 
 ## Storage
 
-| Path          | Purpose                              | Configured via          |
-| ------------- | ------------------------------------ | ----------------------- |
+| Path          | Purpose                                      | Configured via          |
+| ------------- | ------------------------------------         | ----------------------- |
 | `./config`    | Agent configuration, memory, and credentials | `OPENCLAW_CONFIG_DIR`   |
-| `./workspace` | Agent workspace data                 | `OPENCLAW_WORKSPACE_DIR`|
+| `./workspace` | Agent workspace data                         | `OPENCLAW_WORKSPACE_DIR`|
 
 Both directories are created automatically on first run and excluded from version control via `.gitignore`.
 
@@ -78,12 +78,12 @@ For users who prefer to keep all data on-device or want to avoid API costs, Open
 2. Pull at least one model:
 
    ```sh
-   cd ../ollama && docker compose exec ollama ollama pull llama3.2
+   cd ../ollama && docker compose exec ollama ollama pull qwen3.5:9b
    ```
 
 3. Uncomment the Ollama lines in your `openclaw/.env`:
 
-   ```
+   ```env
    OLLAMA_API_KEY=ollama-local
    OLLAMA_BASE_URL=http://host.docker.internal:11434
    ```
