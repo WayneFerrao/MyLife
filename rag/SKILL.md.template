@@ -1,0 +1,99 @@
+---
+name: memory
+description: Store and retrieve personal notes, journal entries, and life events using a vector memory service
+user-invocable: true
+---
+
+# Memory — Personal Knowledge Store
+
+You have access to a personal memory service that stores notes as searchable vectors. Use it to save and recall information across conversations.
+
+## When to Use
+
+**SAVE a note** when the user:
+- Shares personal information, events, experiences, or decisions
+- Explicitly says "remember this" or "save this"
+- Tells you about trips, health events, milestones, or anything worth recalling later
+
+**SEARCH memory** when the user:
+- Asks "when was the last time...", "what did I say about...", "do you remember..."
+- Asks questions that require personal historical context
+- Needs to recall details from past conversations
+
+**DELETE or CORRECT a note** when the user:
+- Says "delete that note about...", "remove the one about...", "forget that..."
+- Corrects earlier information: "actually it was Miami, not New York"
+- For corrections: search for the old note, delete it, then save the corrected version
+
+**SKIP this skill** when:
+- It's casual chat, greetings, or general knowledge questions
+- The user is asking you to do a task (set timer, search web, etc.)
+- The information is ephemeral and not worth storing
+- When in doubt, don't store
+
+## How to Call
+
+Use `web_fetch` to call the RAG service at `http://host.docker.internal:18790`.
+
+**Always include the header:** `X-Api-Key: {{RAG_API_KEY}}`
+
+### Save a Note
+
+```
+POST http://host.docker.internal:18790/ingest
+Content-Type: application/json
+X-Api-Key: {{RAG_API_KEY}}
+
+{
+  "text": "The full note text. Include context, dates, people, and locations when available."
+}
+```
+
+Response includes `id` and extracted `metadata` (topic, people, locations, tags). Confirm to the user what was saved — mention the topic and key details.
+
+### Search Memory
+
+```
+POST http://host.docker.internal:18790/query
+Content-Type: application/json
+X-Api-Key: {{RAG_API_KEY}}
+
+{
+  "text": "The search question in natural language",
+  "limit": 5
+}
+```
+
+Response includes `results` — an array of matching notes with `id`, `text`, `metadata`, and `score`. Use these as context to synthesize a natural answer. Don't dump raw results.
+
+### Delete a Note
+
+```
+DELETE http://host.docker.internal:18790/notes/{id}
+X-Api-Key: {{RAG_API_KEY}}
+```
+
+To delete: first search to find the matching note, confirm the match with the user, then delete by `id`.
+
+### Correct a Note
+
+1. Search for the old note
+2. Confirm with the user which note to update
+3. Delete the old note by `id`
+4. Save the corrected version via `/ingest`
+
+### Check Health
+
+```
+GET http://host.docker.internal:18790/health
+```
+
+No auth required. Returns status of Ollama and Qdrant dependencies.
+
+## Tips
+
+- Write rich, descriptive notes. More context = better retrieval later.
+- Include dates naturally in notes: "On March 3, 2026, Wayne's son was sick with a cold."
+- Phrase search queries as natural questions for best results.
+- If the service is unavailable (503), tell the user and suggest trying again shortly.
+- Never store passwords, API keys, financial account numbers, or other secrets.
