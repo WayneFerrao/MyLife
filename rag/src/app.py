@@ -259,12 +259,12 @@ async def seed():
         try:
             metadata = await extract_metadata(note)
         except Exception:
-            metadata = {"topic": "unknown", "tags": []}
+            metadata = {"topic": "seed-test-data", "tags": ["seed"]}
         vector = await embed(note, prefix="search_document")
         point_id = str(uuid.uuid4())
         payload = {
             "text": note,
-            "metadata": metadata,
+            "metadata": {**metadata, "source": "seed"},
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await http.put(
