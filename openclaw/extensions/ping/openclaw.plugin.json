@@ -1,0 +1,9 @@
+{
+  "id": "ping",
+  "name": "Ping",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
