@@ -5,8 +5,20 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 OPENCLAW_SKILL_DIR="../openclaw/workspace/skills/memory"
+SHARED_NETWORK="mylife-shared"
 
 echo "=== RAG Service Setup ==="
+echo
+
+# ── 0. Ensure shared Docker network exists ────────────────────────
+
+if docker network inspect "$SHARED_NETWORK" &>/dev/null; then
+    echo "[ok] Docker network '$SHARED_NETWORK' already exists"
+else
+    echo "[+] Creating Docker network '$SHARED_NETWORK'..."
+    docker network create "$SHARED_NETWORK"
+    echo "[ok] Created Docker network '$SHARED_NETWORK'"
+fi
 echo
 
 # ── 1. Create .env ──────────────────────────────────────────────────
@@ -61,7 +73,11 @@ echo
 echo "  3. Verify the service is healthy:"
 echo "       curl http://localhost:18790/health"
 echo
-echo "  4. (Optional) Seed test data"
+echo "  4. Verify OpenClaw can reach the RAG service:"
+echo "       docker exec openclaw-gateway curl -sf http://rag:18790/health"
+echo "       (should return {\"status\":\"ok\",...})"
+echo
+echo "  5. (Optional) Seed test data"
 echo "       Manually set ALLOW_SEED=true in .env"
 echo "       docker compose down; docker compose up -d --force-recreate"
 echo "       curl -X POST http://localhost:18790/seed -H 'X-Api-Key: $RAG_API_KEY'"

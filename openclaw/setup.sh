@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+SHARED_NETWORK="mylife-shared"
+
 # ── Preflight checks ────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   echo "Error: Docker is not installed. See https://docs.docker.com/get-docker/"
@@ -12,6 +14,15 @@ fi
 if ! docker compose version &>/dev/null; then
   echo "Error: Docker Compose is not installed. See https://docs.docker.com/compose/install/"
   exit 1
+fi
+
+# ── Ensure shared Docker network exists ──────────────────────────────────────
+if docker network inspect "$SHARED_NETWORK" &>/dev/null; then
+  echo "Docker network '$SHARED_NETWORK' already exists"
+else
+  echo "Creating Docker network '$SHARED_NETWORK'..."
+  docker network create "$SHARED_NETWORK"
+  echo "Created Docker network '$SHARED_NETWORK'"
 fi
 
 # ── Create .env from example if it doesn't exist ────────────────────────────

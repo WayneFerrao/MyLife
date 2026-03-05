@@ -33,14 +33,14 @@ You have access to a personal memory service that stores notes as searchable vec
 
 ## How to Call
 
-Use `web_fetch` to call the RAG service at `http://host.docker.internal:18790`.
+Use `web_fetch` to call the RAG service at `http://rag:18790`.
 
 **Always include the header:** `X-Api-Key: {{RAG_API_KEY}}`
 
 ### Save a Note
 
 ```
-POST http://host.docker.internal:18790/ingest
+POST http://rag:18790/ingest
 Content-Type: application/json
 X-Api-Key: {{RAG_API_KEY}}
 
@@ -54,7 +54,7 @@ Response includes `id` and extracted `metadata` (topic, people, locations, tags)
 ### Search Memory
 
 ```
-POST http://host.docker.internal:18790/query
+POST http://rag:18790/query
 Content-Type: application/json
 X-Api-Key: {{RAG_API_KEY}}
 
@@ -69,7 +69,7 @@ Response includes `results` — an array of matching notes with `id`, `text`, `m
 ### Delete a Note
 
 ```
-DELETE http://host.docker.internal:18790/notes/{id}
+DELETE http://rag:18790/notes/{id}
 X-Api-Key: {{RAG_API_KEY}}
 ```
 
@@ -85,7 +85,7 @@ To delete: first search to find the matching note, confirm the match with the us
 ### Check Health
 
 ```
-GET http://host.docker.internal:18790/health
+GET http://rag:18790/health
 ```
 
 No auth required. Returns status of Ollama and Qdrant dependencies.

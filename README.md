@@ -57,6 +57,7 @@ Designed as a reusable, hands-on blueprint — experiment, extend, and adapt you
      - [Qdrant dashboard](http://localhost:6333/dashboard) — running at `http://host.docker.internal:6333`
 
 5. **Set up the RAG service**
-   - Run `rag/setup.sh`
+   - Run `rag/setup.sh` (this also creates the `mylife-shared` Docker network used by both OpenClaw and RAG)
    - Follow the "Next steps" printed out
    - Verify at `http://localhost:18790/health`
+   - Verify OpenClaw → RAG connectivity: `docker exec openclaw-gateway curl -sf http://rag:18790/health`

@@ -159,6 +159,14 @@ docker compose run --rm --entrypoint "node dist/index.js onboard" openclaw-gatew
 docker compose pull && docker compose up -d
 ```
 
+## Networking
+
+OpenClaw joins a shared Docker network (`mylife-shared`) so it can communicate with other services in this project (e.g., the RAG memory service). The setup script creates this network automatically. If you need to create it manually:
+
+```bash
+docker network create mylife-shared
+```
+
 ## Security
 
 The gateway binds to `127.0.0.1` only and is not exposed to the public network. For remote access, use an SSH tunnel rather than opening the port directly:
