@@ -129,6 +129,8 @@ async def ingest(req: IngestRequest):
     Raises:
         httpx.HTTPStatusError: If Qdrant upsert fails.
     """
+    log.info("Ingest: %s", req.text[:200])
+
     async def _extract():
         try:
             return await extract_metadata(req.text)
@@ -177,6 +179,8 @@ async def query(req: QueryRequest):
     Raises:
         httpx.HTTPStatusError: If Qdrant query fails.
     """
+    log.info("Query: %s (limit=%d)", req.text[:200], req.limit)
+
     # Run filter extraction and embedding in parallel to cut latency.
     # Filter extraction is best-effort — falls back to pure vector search.
     async def _extract_filters():
@@ -240,6 +244,7 @@ async def delete_note(point_id: str):
     Raises:
         httpx.HTTPStatusError: If Qdrant delete fails.
     """
+    log.info("Delete: %s", point_id)
     resp = await http.post(
         f"{QDRANT_URL}/collections/{COLLECTION}/points/delete?wait=true",
         json={"points": [point_id]},
