@@ -5,45 +5,78 @@ Self-hosted AI assistant that connects to messaging platforms (WhatsApp, Telegra
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- At least one model provider — either a cloud API key (Anthropic, OpenAI, etc.) or a locally running Ollama instance (see [Model Providers](#model-providers))
+- At least one model provider: Ollama for local inference (see [Local Models (Ollama)](#local-models-ollama)) or a cloud API key (Anthropic, OpenAI, etc.) — both are optional but you need at least one
 
 ## Setup
 
-1. Configure at least one model provider API key in `.env` (see [Model Providers](#model-providers)).
+Run the setup script from the `openclaw/` directory:
 
-2. Run the setup script. It creates your `.env`, generates a gateway token, runs the onboarding wizard, and patches the config for Docker:
+```sh
+./setup.sh
+```
 
-   ```sh
-   ./setup.sh
-   ```
+The script will ask you to choose a setup method:
 
-3. Start the gateway:
+### Method 1: Auto (Recommended)
 
-   ```sh
-   docker compose up -d
-   ```
+Configures everything non-interactively from `.env` defaults. No manual JSON editing required.
 
-4. Open the web UI at [http://localhost:18789](http://localhost:18789).
+1. Generates a gateway token
+2. Prompts for your WhatsApp phone number (or skip to configure later)
+3. Writes `config/openclaw.json` automatically using the OpenClaw CLI
+4. Starts the gateway and shows the WhatsApp QR code in the terminal (if a number was provided)
 
-5. When the UI prompts for a token, paste the gateway token printed by the setup script. This authenticates the browser's WebSocket connection to the gateway. You can find it again in your `.env` file under `OPENCLAW_GATEWAY_TOKEN`.
+After setup, follow the printed next steps to approve devices and you're done.
 
-6. Approve the browser as a trusted device. The web UI will show a pairing prompt. In a separate terminal, run:
+### Method 2: Wizard
 
-   ```sh
-   docker compose exec openclaw-gateway node dist/index.js devices list
-   docker compose exec openclaw-gateway node dist/index.js devices approve <requestId>
-   ```
+Runs OpenClaw's built-in interactive onboarding CLI, then patches the generated config for Docker. Use this if you want to manually walk through provider selection, model choice, and channel configuration step by step.
 
-   Replace `<requestId>` with the ID shown in the devices list output.
+1. Runs the interactive onboarding CLI to configure your agent
+2. Automatically patches the generated config for Docker (`gateway.bind: lan`, `controlUi.allowedOrigins`)
+
+## Local Models (Ollama)
+
+Ollama must be installed and running **natively on your Mac** — do not use the Docker version of Ollama. Running natively gives OpenClaw access to Metal GPU acceleration (Apple Silicon), which Docker cannot access.
+
+```sh
+brew install ollama
+brew services start ollama
+```
+
+Then pull your preferred model:
+
+```sh
+ollama pull qwen3.5:9b
+```
+
+The default model is `qwen3.5:9b`, configured via `OLLAMA_MODEL` in `.env`. OpenClaw connects to Ollama at `http://host.docker.internal:11434` — no additional configuration needed. The setup script handles registering the model in `openclaw.json` automatically.
+
+See [`../ollama/README.md`](../ollama/README.md) for model recommendations and hardware notes.
+
+## Model Providers
+
+OpenClaw supports cloud APIs, local Ollama models, or both at the same time. Configure providers in `.env`.
+
+### Cloud Providers
+
+Add the API key for your provider. These are optional if you are using Ollama.
+
+| Provider | Environment Variable | Sign Up |
+| -------- | -------------------- | ------- |
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
+| OpenAI (GPT) | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) |
+| Google (Gemini) | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) |
+| OpenRouter | `OPENROUTER_API_KEY` | [openrouter.ai](https://openrouter.ai) |
 
 ## Architecture
 
-Running `docker compose up -d` starts a single container: **openclaw-gateway**. It is the long-running core of OpenClaw and handles everything:
+Running `docker compose up -d` starts a single container: **openclaw-gateway**. It handles everything:
 
-- **Agent runtime** — Executes your AI agent, routing prompts to the configured model provider (Anthropic, OpenAI, etc.) and running tools on your behalf.
-- **WebSocket server** — Acts as the central communication hub. All messaging channels (WhatsApp, Telegram, Slack, etc.) and companion apps connect to the gateway over WebSocket to send and receive messages.
-- **Web UI** — Serves a browser-based chat interface on port `18789` for interacting with your agent directly.
-- **CLI** — The same container includes the full OpenClaw CLI for administration tasks (onboarding, channel management, diagnostics). See [Running CLI Commands](#running-cli-commands) for usage.
+- **Agent runtime** — Executes your AI agent, routing prompts to the configured model provider and running tools on your behalf.
+- **WebSocket server** — Central communication hub for all messaging channels and companion apps.
+- **Web UI** — Browser-based chat interface on port `18789`.
+- **CLI** — Full OpenClaw CLI for administration. See [Running CLI Commands](#running-cli-commands).
 
 ## Storage
 
@@ -55,79 +88,23 @@ Running `docker compose up -d` starts a single container: **openclaw-gateway**. 
 
 `config/` and `workspace/` are created on first run and excluded from version control. `extensions/` is tracked in git (it contains plugin source code), but `node_modules/` inside each extension is gitignored since dependencies are installed automatically at container startup.
 
-## Model Providers
-
-OpenClaw supports cloud APIs, locally running models, or both at the same time. Configure providers by editing the `.env` file.
-
-### Cloud Providers
-
-Add the API key for your subscription. OpenClaw auto-discovers available models from each configured provider.
-
-| Provider | Environment Variable | Sign Up |
-| -------- | -------------------- | ------- |
-| Anthropic (Claude) | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) |
-| OpenAI (GPT) | `OPENAI_API_KEY` | [platform.openai.com](https://platform.openai.com) |
-| Google (Gemini) | `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) |
-| OpenRouter | `OPENROUTER_API_KEY` | [openrouter.ai](https://openrouter.ai) |
-
-### Local Models (Ollama)
-
-For users who prefer to keep all data on-device or want to avoid API costs, OpenClaw can connect to a local Ollama instance. This requires the `ollama/` service in this repo to be running.
-
-1. Set up and start Ollama by following the instructions in [`../ollama/README.md`](../ollama/README.md).
-
-2. Pull at least one model:
-
-   ```sh
-   cd ../ollama && docker compose exec ollama ollama pull qwen3.5:9b
-   ```
-
-3. Uncomment the Ollama lines in your `openclaw/.env`:
-
-   ```env
-   OLLAMA_API_KEY=ollama-local
-   OLLAMA_BASE_URL=http://host.docker.internal:11434
-   ```
-
-4. Restart the gateway:
-
-   ```sh
-   docker compose restart openclaw-gateway
-   ```
-
-OpenClaw will discover all models available in your Ollama instance alongside any configured cloud providers.
-
 ## Running CLI Commands
 
-OpenClaw is installed inside the Docker container, not on your host machine. To run CLI commands, execute them inside the running gateway container:
+OpenClaw is installed inside the Docker container, not on your host machine. Run CLI commands via `docker compose exec`:
 
 ```sh
 docker compose exec openclaw-gateway node dist/index.js <command>
 ```
 
-For example, where the OpenClaw docs say `openclaw channels login --channel whatsapp`:
-
-```sh
-docker compose exec openclaw-gateway node dist/index.js channels login --channel whatsapp
-```
-
 ### Shorter alternative: install the CLI locally
 
-If you'd prefer to run `openclaw <command>` directly from your terminal, install [Node.js](https://nodejs.org/) (v22+) and the OpenClaw CLI globally:
+Install [Node.js](https://nodejs.org/) (v22+) and the OpenClaw CLI globally:
 
 ```sh
 npm install -g openclaw
 ```
 
-Then commands become simply:
-
-```sh
-openclaw channels login --channel whatsapp
-openclaw devices list
-openclaw doctor
-```
-
-The local CLI connects to the same running gateway container — it reads the config from `./config/` and authenticates with the same gateway token. Both approaches work; the Docker method just avoids needing Node.js on the host.
+Then commands become simply `openclaw <command>`. The local CLI connects to the same running gateway container.
 
 ## Common Commands
 
@@ -147,8 +124,8 @@ docker compose exec openclaw-gateway node dist/index.js devices list
 # Approve a device
 docker compose exec openclaw-gateway node dist/index.js devices approve <requestId>
 
-# Connect a messaging channel (e.g. WhatsApp)
-docker compose exec openclaw-gateway node dist/index.js channels login --channel whatsapp
+# Connect WhatsApp (show QR code in terminal)
+docker compose exec openclaw-gateway node dist/index.js channels login --channel whatsapp --verbose
 
 # Run diagnostics
 docker compose exec openclaw-gateway node dist/index.js doctor
@@ -228,7 +205,7 @@ docker network create mylife-shared
 
 ## Security
 
-The gateway binds to `127.0.0.1` only and is not exposed to the public network. For remote access, use an SSH tunnel rather than opening the port directly:
+The gateway is published on `127.0.0.1:18789` on the host via Docker port mapping and is not exposed to the public network. For remote access, use an SSH tunnel:
 
 ```sh
 ssh -L 18789:127.0.0.1:18789 user@your-server
@@ -236,16 +213,35 @@ ssh -L 18789:127.0.0.1:18789 user@your-server
 
 ## Connecting Messaging Channels
 
-After onboarding, connect messaging platforms by running:
+Connect messaging platforms by running:
 
 ```sh
 docker compose exec openclaw-gateway node dist/index.js channels login --channel <name>
 ```
 
-Replace `<name>` with `whatsapp`, `telegram`, `discord`, `slack`, or any other supported channel. Follow the interactive prompts to link the platform. See the [OpenClaw channel docs](https://docs.openclaw.ai/channels) for platform-specific setup guides.
+Replace `<name>` with `whatsapp`, `telegram`, `discord`, `slack`, or any other supported channel. See the [OpenClaw channel docs](https://docs.openclaw.ai/channels) for platform-specific setup guides.
 
 ## Further Reading
 
 - [OpenClaw documentation](https://docs.openclaw.ai)
 - [Docker installation guide](https://docs.openclaw.ai/install/docker)
 - [OpenClaw GitHub repository](https://github.com/openclaw/openclaw)
+
+## FAQ
+
+### Can I edit `openclaw.json` directly?
+
+Yes. The config file lives at `config/openclaw.json` and is standard JSON. The setup script writes it automatically via the OpenClaw CLI, but you can hand-edit it if you need to make changes outside of what the CLI exposes. Restart the gateway after any manual edits:
+
+```sh
+docker compose restart
+```
+
+### Can I add Ollama models after setup?
+
+Yes. Pull the model natively with `ollama pull <model>`, then update `OLLAMA_MODEL` in `.env` and re-run the relevant config set command (or edit `openclaw.json` directly):
+
+```sh
+docker compose exec openclaw-gateway node dist/index.js config set agents.defaults.model.primary "ollama/<model>"
+docker compose restart
+```
