@@ -18,6 +18,7 @@ COLLECTION = os.environ.get("COLLECTION_NAME", "notes")
 API_KEY = os.environ["RAG_API_KEY"]  # required — fail fast if missing
 ALLOW_SEED = os.environ.get("ALLOW_SEED", "false").lower() == "true"
 VECTOR_DIM = 768  # nomic-embed-text output dimensions
+SCORE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "0.3"))  # drop results below this cosine similarity
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rag")

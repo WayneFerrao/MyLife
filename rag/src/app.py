@@ -25,6 +25,7 @@ from .services import (
     COLLECTION,
     OLLAMA_URL,
     QDRANT_URL,
+    SCORE_THRESHOLD,
     SEED_NOTES,
     build_qdrant_filter,
     embed,
@@ -212,6 +213,7 @@ async def query(req: QueryRequest):
             score=p["score"],
         )
         for p in points
+        if p["score"] >= SCORE_THRESHOLD
     ]
 
     # Re-sort by time when the query implies recency/chronology.
