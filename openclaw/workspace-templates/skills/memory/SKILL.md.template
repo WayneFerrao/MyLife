@@ -1,0 +1,89 @@
+﻿---
+name: moments
+description: Store and recall moments â€” things that happened, things worth remembering
+user-invocable: true
+---
+
+# Moments â€” Something Happened
+
+You have access to a moment storage service backed by vector search. Use it whenever the human tells you something that happened or asks about past moments.
+
+## When to Use
+
+**StoreMoment** â€” the human is telling you about something that happened:
+- Any message describing an event, experience, observation, or noteworthy occurrence
+- Messages starting with `/m`
+- "I had sushi with Kyle", "Just finished reading Dune", "/m went for a run"
+
+**RecallDetails** â€” the human is asking about past moments:
+- Questions about the past: "when did", "what happened", "last time", "do you remember"
+- Messages starting with `/r`
+- "When did I last eat sushi?", "/r running", "Have I been to the dentist?"
+
+**Do NOT use** when:
+- It's a greeting or off-topic message (redirect per AGENTS.md)
+- The information contains passwords, API keys, or financial account numbers
+
+## How to Call
+
+Use `web_fetch` to call the service at `http://host.docker.internal:18790`.
+
+**Always include the header:** `X-Api-Key: {{RAG_API_KEY}}`
+
+### StoreMoment
+
+```
+POST http://host.docker.internal:18790/ingest
+Content-Type: application/json
+X-Api-Key: {{RAG_API_KEY}}
+
+{
+  "text": "The full moment text. Include dates, people, and locations when available."
+}
+```
+
+Response includes `id` and extracted `metadata` (topic, people, locations, tags).
+
+**After storing, respond:**
+```
+ðŸª´ Stored: [topic] â€” [key details from metadata: people, locations, tags]
+```
+
+### RecallDetails
+
+```
+POST http://host.docker.internal:18790/query
+Content-Type: application/json
+X-Api-Key: {{RAG_API_KEY}}
+
+{
+  "text": "The search question in natural language",
+  "limit": 5
+}
+```
+
+Response includes `results` â€” an array of matching moments with `id`, `text`, `metadata`, and `score`.
+
+**After querying, respond:**
+Synthesize the results into a brief, natural answer. Mention dates, people, and locations from the metadata. Do NOT dump raw JSON results.
+
+If no results match, say:
+```
+ðŸª´ No matching moments found for: [query]
+```
+
+### Check Health
+
+```
+GET http://host.docker.internal:18790/health
+```
+
+No auth required. If the service is unavailable (503), tell the human and suggest trying again shortly.
+
+## Tips
+
+- Write rich moment text. More context = better retrieval later.
+- Include dates naturally: "On March 4, 2026, had sushi with Kyle downtown."
+- If the human provides a bare fragment like "/m dentist", expand it slightly: "Went to the dentist" with today's date.
+- Phrase search queries as natural questions for best results.
+

@@ -71,6 +71,25 @@ if [ -d "$TEMPLATE_DIR" ]; then
   echo "[ok] Workspace files installed from $TEMPLATE_DIR"
 fi
 
+# ── Install moments skill (requires RAG_API_KEY from ../rag/.env) ────────────
+SKILL_TEMPLATE="$TEMPLATE_DIR/skills/memory/SKILL.md.template"
+SKILL_DIR="$WORKSPACE_DIR/skills/memory"
+if [ -f "$SKILL_TEMPLATE" ]; then
+  RAG_ENV="../rag/.env"
+  if [ -f "$RAG_ENV" ]; then
+    RAG_API_KEY=$(grep '^RAG_API_KEY=' "$RAG_ENV" | cut -d= -f2)
+    if [ -n "$RAG_API_KEY" ] && [ "$RAG_API_KEY" != "<your-rag-api-key>" ]; then
+      mkdir -p "$SKILL_DIR"
+      sed "s|{{RAG_API_KEY}}|${RAG_API_KEY}|g" "$SKILL_TEMPLATE" > "$SKILL_DIR/SKILL.md"
+      echo "[ok] Moments skill installed with API key from ../rag/.env"
+    else
+      echo "[!] RAG_API_KEY not set in ../rag/.env — run rag/setup.sh first"
+    fi
+  else
+    echo "[!] ../rag/.env not found — run rag/setup.sh first to generate API key"
+  fi
+fi
+
 # ── Patch config for Docker environment ──────────────────────────────────────
 CONFIG_FILE="./config/openclaw.json"
 if [ -f "$CONFIG_FILE" ]; then
