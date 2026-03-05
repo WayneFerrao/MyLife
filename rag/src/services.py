@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+from datetime import date
 
 import httpx
 from fastapi import Header, HTTPException
@@ -30,11 +31,26 @@ METADATA_SCHEMA = {
         "topic": {"type": "string"},
         "people": {"type": "array", "items": {"type": "string"}},
         "locations": {"type": "array", "items": {"type": "string"}},
-        "dates_mentioned": {"type": "array", "items": {"type": "string"}},
+        "dates_mentioned": {"type": "array", "items": {"type": "string"}}, # if no dates are mentioned, include the current date so you know when smth happened
         "mood": {"type": "string"},
         "tags": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["topic", "tags"],
+}
+
+QUERY_FILTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "topic": {"type": "string"},
+        "people": {"type": "array", "items": {"type": "string"}},
+        "locations": {"type": "array", "items": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "time_sort": {
+            "type": "string",
+            "enum": ["newest_first", "oldest_first", "relevance"],
+        },
+    },
+    "required": ["topic", "people", "locations", "tags", "time_sort"],
 }
 
 SEED_NOTES = [
@@ -122,10 +138,17 @@ async def extract_metadata(text: str) -> dict:
                 {
                     "role": "system",
                     "content": (
+                        f"Today's date is {date.today().isoformat()}. "
                         "Extract metadata from this note. Return JSON with: "
-                        "topic (string), people (list of strings), locations (list of strings), "
-                        "dates_mentioned (list of strings), mood (string or null), "
-                        "tags (list of short keyword strings). "
+                        "topic (single lowercase category like 'travel', 'health', 'work', 'family', 'food', 'finance'), "
+                        "people (list of lowercase names or relationships like 'son', 'sarah'), "
+                        "locations (list of lowercase place names like 'toronto', 'miami'), "
+                        "dates_mentioned (list of ISO dates like '2026-02-10' — "
+                        "resolve relative references like 'yesterday', 'last week' to actual dates using today's date; "
+                        "if no date is mentioned at all, use today's date), "
+                        "mood (lowercase string or null), "
+                        "tags (list of short lowercase keyword strings). "
+                        "All string values must be lowercase. "
                         "Only include fields where you find relevant information."
                     ),
                 },
@@ -137,7 +160,22 @@ async def extract_metadata(text: str) -> dict:
         },
     )
     resp.raise_for_status()
-    return json.loads(resp.json()["message"]["content"])
+    raw = json.loads(resp.json()["message"]["content"])
+    return normalize_metadata(raw)
+
+
+def normalize_metadata(meta: dict) -> dict:
+    """Lowercase all filterable string fields so Qdrant exact-match works
+    regardless of LLM casing inconsistencies."""
+    out = dict(meta)
+    if "topic" in out and isinstance(out["topic"], str):
+        out["topic"] = out["topic"].lower()
+    for key in ("people", "locations", "tags"):
+        if key in out and isinstance(out[key], list):
+            out[key] = [v.lower() for v in out[key] if isinstance(v, str)]
+    if "mood" in out and isinstance(out["mood"], str):
+        out["mood"] = out["mood"].lower()
+    return out
 
 
 # ── Qdrant helpers ──────────────────────────────────────────────────
@@ -161,3 +199,78 @@ async def ensure_collection():
     )
     resp.raise_for_status()
     log.info("Created Qdrant collection '%s'", COLLECTION)
+
+
+async def extract_query_filters(text: str) -> dict:
+    """Extract structured filter hints from a search query using the chat model.
+
+    Identifies people, locations, and tags mentioned in the query so Qdrant
+    payload filters can narrow results before vector ranking.  Also determines
+    whether results should be sorted by time rather than pure relevance.
+
+    Args:
+        text: The natural-language search query.
+
+    Returns:
+        A dict with keys: people, locations, tags (all list[str]) and
+        time_sort ("newest_first", "oldest_first", or "relevance").
+    """
+    resp = await http.post(
+        f"{OLLAMA_URL}/api/chat",
+        json={
+            "model": CHAT_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract search filters from this query. Return JSON with: "
+                        "topic (single lowercase category like 'travel', 'health', 'work', 'family', 'food', 'finance' — empty string if unclear), "
+                        "people (list of person names or relationships like 'son', 'mom'), "
+                        "locations (list of place names), "
+                        "tags (list of short topic keywords that would help find relevant notes), "
+                        "time_sort ('newest_first' if the query asks about recent/last events, "
+                        "'oldest_first' if it asks about earliest/first events, "
+                        "'relevance' otherwise). "
+                        "Return empty lists if no specific filters are found. "
+                        "All string values must be lowercase."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            "format": QUERY_FILTER_SCHEMA,
+            "stream": False,
+            "options": {"temperature": 0},
+        },
+    )
+    resp.raise_for_status()
+    return json.loads(resp.json()["message"]["content"])
+
+
+def build_qdrant_filter(filters: dict) -> dict | None:
+    """Convert extracted query filters into a Qdrant filter clause.
+
+    Builds ``should`` conditions (OR logic) so results matching *any*
+    extracted entity are included.  Returns None when no meaningful
+    filters were extracted, letting the query fall back to pure vector
+    similarity.
+
+    Args:
+        filters: Output of :func:`extract_query_filters`.
+
+    Returns:
+        A Qdrant filter dict with a ``should`` clause, or None if no
+        conditions were generated.
+    """
+    conditions = []
+    topic = filters.get("topic", "")
+    if topic:
+        conditions.append({"key": "metadata.topic", "match": {"value": topic.lower()}})
+    for person in filters.get("people", []):
+        conditions.append({"key": "metadata.people", "match": {"value": person.lower()}})
+    for location in filters.get("locations", []):
+        conditions.append({"key": "metadata.locations", "match": {"value": location.lower()}})
+    for tag in filters.get("tags", []):
+        conditions.append({"key": "metadata.tags", "match": {"value": tag.lower()}})
+    if not conditions:
+        return None
+    return {"should": conditions}
