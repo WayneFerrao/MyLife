@@ -2,6 +2,12 @@
 library/
 postgres/
 config/
-workspace/
 models/
 qdrant_data/
+
+# OpenClaw workspace — track templates, ignore runtime data and secrets
+openclaw/workspace/.git/
+openclaw/workspace/.openclaw/
+openclaw/workspace/skills/
+openclaw/workspace/memory/
+openclaw/workspace/MEMORY.md
