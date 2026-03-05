@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Attach to openclaw-gateway (Docker)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "address": "localhost",
+      "localRoot": "${workspaceFolder}/openclaw",
+      "remoteRoot": "/home/node",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**"],
+      "restart": true,
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/openclaw/extensions/**",
+        "!**/node_modules/**"
+      ]
+    }
+  ]
+}
