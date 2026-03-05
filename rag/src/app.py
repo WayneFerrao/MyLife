@@ -4,6 +4,7 @@ Provides endpoints to store, search, and delete personal notes backed by
 Qdrant vector search and Ollama embeddings.
 """
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -254,24 +255,35 @@ async def seed():
     if not ALLOW_SEED:
         raise HTTPException(status_code=403, detail="Seeding is disabled. Set ALLOW_SEED=true in .env")
 
-    results = []
-    for note in SEED_NOTES:
+    async def _process_note(note: str) -> tuple[str, dict, list[float]]:
         try:
             metadata = await extract_metadata(note)
         except Exception:
             metadata = {"topic": "seed-test-data", "tags": ["seed"]}
         vector = await embed(note, prefix="search_document")
-        point_id = str(uuid.uuid4())
-        payload = {
-            "text": note,
-            "metadata": {**metadata, "source": "seed"},
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        await http.put(
-            f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
-            json={"points": [{"id": point_id, "vector": vector, "payload": payload}]},
-        )
+        return str(uuid.uuid4()), metadata, vector
+
+    processed = await asyncio.gather(*[_process_note(note) for note in SEED_NOTES])
+
+    now = datetime.now(timezone.utc).isoformat()
+    points = []
+    results = []
+    for note, (point_id, metadata, vector) in zip(SEED_NOTES, processed):
+        points.append({
+            "id": point_id,
+            "vector": vector,
+            "payload": {
+                "text": note,
+                "metadata": {**metadata, "source": "seed"},
+                "created_at": now,
+            },
+        })
         results.append({"id": point_id, "topic": metadata.get("topic", "unknown")})
         log.info("Seeded: %s", metadata.get("topic", "unknown"))
+
+    await http.put(
+        f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
+        json={"points": points},
+    )
 
     return {"seeded": len(results), "notes": results}
