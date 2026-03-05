@@ -75,10 +75,21 @@ if [ "$SETUP_MODE" = "1" ]; then
     printf "WhatsApp phone number in E.164 format (e.g. +12065551234), or press Enter to skip: "
     read -r WHATSAPP_ALLOW_FROM
     if [ -n "$WHATSAPP_ALLOW_FROM" ]; then
-      if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s|WHATSAPP_ALLOW_FROM=.*|WHATSAPP_ALLOW_FROM=$WHATSAPP_ALLOW_FROM|" .env
+      # Validate E.164 format to avoid unexpected characters breaking quoting
+      if ! [[ "$WHATSAPP_ALLOW_FROM" =~ ^\+[0-9]{6,15}$ ]]; then
+        echo "Invalid WhatsApp phone number. Expected E.164 format like +12065551234. Skipping."
+        WHATSAPP_ALLOW_FROM=""
+      fi
+    fi
+    if [ -n "$WHATSAPP_ALLOW_FROM" ]; then
+      if grep -q '^WHATSAPP_ALLOW_FROM=' .env; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          sed -i '' "s|WHATSAPP_ALLOW_FROM=.*|WHATSAPP_ALLOW_FROM=$WHATSAPP_ALLOW_FROM|" .env
+        else
+          sed -i "s|WHATSAPP_ALLOW_FROM=.*|WHATSAPP_ALLOW_FROM=$WHATSAPP_ALLOW_FROM|" .env
+        fi
       else
-        sed -i "s|WHATSAPP_ALLOW_FROM=.*|WHATSAPP_ALLOW_FROM=$WHATSAPP_ALLOW_FROM|" .env
+        echo "WHATSAPP_ALLOW_FROM=$WHATSAPP_ALLOW_FROM" >> .env
       fi
       echo "Saved WhatsApp number to .env"
     else
@@ -98,25 +109,34 @@ if [ "$SETUP_MODE" = "1" ]; then
     "$OLLAMA_MODEL" "$OLLAMA_MODEL")
 
   # Build optional WhatsApp allowFrom config line
+  # WHATSAPP_ALLOW_FROM is validated to E.164 format (+[0-9]{6,15}) above,
+  # so it is safe to interpolate into the container shell script.
   WHATSAPP_CFG=""
   if [ -n "$WHATSAPP_ALLOW_FROM" ]; then
-    WHATSAPP_DM_POLICY="allowlist"
-    WHATSAPP_CFG="cfg channels.whatsapp.allowFrom '[\"$WHATSAPP_ALLOW_FROM\"]'"
-  else
-    WHATSAPP_DM_POLICY="open"
+    WHATSAPP_CFG="cfg channels.whatsapp.enabled      true
+    cfg channels.whatsapp.allowFrom '[\"$WHATSAPP_ALLOW_FROM\"]'
+    cfg channels.whatsapp.dmPolicy     allowlist"
   fi
 
   echo "Applying config via OpenClaw CLI..."
   docker compose run --rm --entrypoint sh openclaw-gateway -c "
     set -e
-    cfg() { node dist/index.js config set \"\$@\" 2>&1 | grep -Ev '^🦞|^Config overwrite|Failed to discover Ollama' || true; }
+    cfg() {
+      # Run config set, capture output and status so we don't lose failures in the pipeline
+      set +e
+      out=\$(node dist/index.js config set \"\$@\" 2>&1)
+      status=\$?
+      set -e
+      printf '%s\n' \"\$out\" | grep -Ev '^🦞|^Config overwrite|Failed to discover Ollama' || true
+      return \$status
+    }
 
     # Required: gateway mode (blocks startup if unset), auth, and Docker networking
     cfg gateway.mode             local
     cfg gateway.auth.mode        token
     cfg gateway.auth.token       '$TOKEN'
     cfg gateway.bind             lan
-    cfg gateway.controlUi.allowedOrigins '[\"http://localhost:18789\"]'
+    cfg gateway.controlUi.allowedOrigins '[\"http://localhost:18789\"]' || true
 
     # Ollama provider — set models array before models.mode to pass validation,
     # then set baseUrl last so it overrides any URL auto-discovered when api is set
@@ -128,12 +148,11 @@ if [ "$SETUP_MODE" = "1" ]; then
 
     # Default model for agents
     cfg agents.defaults.model.primary  'ollama/$OLLAMA_MODEL'
-    cfg agents.defaults.models         '{\"ollama/$OLLAMA_MODEL\":{}}'
+    cfg agents.defaults.models         '{\"ollama/$OLLAMA_MODEL\":{}}' || true
 
-    # WhatsApp channel — set allowFrom before dmPolicy to pass validation
-    cfg channels.whatsapp.enabled      true
+    # WhatsApp channel — only enabled when a phone number is provided;
+    # set allowFrom before dmPolicy to pass validation
     $WHATSAPP_CFG
-    cfg channels.whatsapp.dmPolicy     '$WHATSAPP_DM_POLICY'
   "
   echo "Config applied (model: $OLLAMA_MODEL)"
 
@@ -173,9 +192,14 @@ else
   if [ -f "$CONFIG_FILE" ]; then
     docker compose run --rm --entrypoint sh openclaw-gateway -c "
       set -e
-      cfg() { node dist/index.js config set \"\$@\" 2>&1 | grep -Ev '^🦞|^Config overwrite' || true; }
+      cfg() {
+        output=\$(node dist/index.js config set \"\$@\" 2>&1)
+        status=\$?
+        printf '%s\n' \"\$output\" | grep -Ev '^🦞|^Config overwrite' || true
+        return \"\$status\"
+      }
       cfg gateway.bind                         lan
-      cfg gateway.controlUi.allowedOrigins     '[\"http://localhost:18789\"]'
+      cfg gateway.controlUi.allowedOrigins     '[\"http://localhost:18789\"]' || true
     "
     echo "Patched config for Docker (bind: lan, allowedOrigins: localhost:18789)"
   fi

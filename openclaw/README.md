@@ -5,8 +5,7 @@ Self-hosted AI assistant that connects to messaging platforms (WhatsApp, Telegra
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- Ollama installed natively on your machine (see [Local Models (Ollama)](#local-models-ollama))
-- Optionally, a cloud API key (Anthropic, OpenAI, etc.) if you prefer cloud models
+- At least one model provider: Ollama for local inference (see [Local Models (Ollama)](#local-models-ollama)) or a cloud API key (Anthropic, OpenAI, etc.) — both are optional but you need at least one
 
 ## Setup
 
@@ -139,7 +138,7 @@ docker compose pull && docker compose up -d
 
 ## Security
 
-The gateway binds to `127.0.0.1` only and is not exposed to the public network. For remote access, use an SSH tunnel:
+The gateway is published on `127.0.0.1:18789` on the host via Docker port mapping and is not exposed to the public network. For remote access, use an SSH tunnel:
 
 ```sh
 ssh -L 18789:127.0.0.1:18789 user@your-server
