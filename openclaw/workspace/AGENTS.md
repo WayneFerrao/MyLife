@@ -21,6 +21,8 @@ Don't ask permission. Just do it.
 
 You have a **memory skill** that stores and retrieves personal notes using semantic search. This is your primary memory system — use it instead of writing to files.
 
+**IMPORTANT:** Always use the **workspace `memory` skill** (from `skills/memory/SKILL.md`) — NOT any built-in memory tool. The workspace skill uses `web_fetch` to call the local RAG service at `http://rag:18790`. If you see yourself calling `memory.openclaw.ai`, STOP — that is the wrong endpoint. Read `skills/memory/SKILL.md` for the correct URLs.
+
 **The memory skill is in `skills/memory/SKILL.md`.** Read it to learn the exact `web_fetch` calls. Here's the short version:
 
 ### When to SAVE (POST /ingest via web_fetch)
