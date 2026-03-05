@@ -61,6 +61,16 @@ echo "Follow the interactive prompts to configure your agent."
 echo ""
 docker compose run --rm --entrypoint "node dist/index.js onboard" openclaw-gateway
 
+# ── Install "Something Happened" workspace templates ─────────────────────────
+TEMPLATE_DIR="./workspace-templates"
+WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-./workspace}"
+if [ -d "$TEMPLATE_DIR" ]; then
+  echo ""
+  echo "[+] Installing workspace templates (Something Happened)..."
+  cp "$TEMPLATE_DIR"/*.md "$WORKSPACE_DIR/"
+  echo "[ok] Workspace files installed from $TEMPLATE_DIR"
+fi
+
 # ── Patch config for Docker environment ──────────────────────────────────────
 CONFIG_FILE="./config/openclaw.json"
 if [ -f "$CONFIG_FILE" ]; then
