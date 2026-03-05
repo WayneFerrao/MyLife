@@ -18,6 +18,7 @@ COLLECTION = os.environ.get("COLLECTION_NAME", "notes")
 API_KEY = os.environ["RAG_API_KEY"]  # required — fail fast if missing
 ALLOW_SEED = os.environ.get("ALLOW_SEED", "false").lower() == "true"
 VECTOR_DIM = 768  # nomic-embed-text output dimensions
+SCORE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "0.3"))  # drop results below this cosine similarity
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rag")
@@ -157,6 +158,7 @@ async def extract_metadata(text: str) -> dict:
             "format": METADATA_SCHEMA,
             "stream": False,
             "options": {"temperature": 0},
+            "think": False,
         },
     )
     resp.raise_for_status()
@@ -240,10 +242,13 @@ async def extract_query_filters(text: str) -> dict:
             "format": QUERY_FILTER_SCHEMA,
             "stream": False,
             "options": {"temperature": 0},
+            "think": False,
         },
     )
     resp.raise_for_status()
-    return json.loads(resp.json()["message"]["content"])
+    raw_content = resp.json()["message"]["content"]
+    log.debug("Query filter raw response: %s", raw_content[:500])
+    return json.loads(raw_content)
 
 
 def build_qdrant_filter(filters: dict) -> dict | None:

@@ -1,0 +1,23 @@
+{
+  "id": "rag-memory",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ragUrl": { "type": "string" },
+      "ragApiKey": { "type": "string" }
+    }
+  },
+  "uiHints": {
+    "ragUrl": {
+      "label": "RAG Service URL",
+      "placeholder": "http://rag:18790",
+      "help": "URL of the RAG memory service."
+    },
+    "ragApiKey": {
+      "label": "API Key",
+      "sensitive": true,
+      "help": "API key for the RAG service. Supports ${RAG_API_KEY}."
+    }
+  }
+}

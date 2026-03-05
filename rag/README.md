@@ -25,16 +25,24 @@ The agent learns when and how to use the service through a **skill** (`SKILL.md.
 
 ```bash
 cd rag
-bash setup.sh              # generates .env, installs skill into OpenClaw
+bash setup.sh              # creates shared network, generates .env, installs skill
 docker compose up -d --build
 cd ../openclaw && docker compose restart   # pick up new skill
 ```
 
-Verify:
+Verify the service is healthy:
 ```bash
 curl http://localhost:18790/health
 # {"status":"ok","ollama":true,"qdrant":true}
 ```
+
+Verify OpenClaw can reach the RAG service (both containers must be on the `mylife-shared` network):
+```bash
+docker exec openclaw-gateway curl -sf http://rag:18790/health
+# {"status":"ok","ollama":true,"qdrant":true}
+```
+
+> **Note:** The setup script automatically creates a `mylife-shared` Docker network that both the RAG and OpenClaw containers join. This allows OpenClaw to call the RAG service by its Docker service name (`rag`) instead of routing through the host.
 
 ## API Endpoints
 
@@ -102,6 +110,15 @@ See `.env-example` for all options. Key variables:
 | `CHAT_MODEL` | `qwen3.5:9b` | Ollama chat model for metadata |
 | `COLLECTION_NAME` | `notes` | Qdrant collection name |
 | `ALLOW_SEED` | `false` | Enable /seed endpoint |
+
+## Networking
+
+The RAG and OpenClaw services run in separate `docker-compose.yml` files. A shared external Docker network (`mylife-shared`) connects them so OpenClaw can reach the RAG service by its Docker service name (`http://rag:18790`).
+
+The setup script creates this network automatically. If you need to create it manually:
+```bash
+docker network create mylife-shared
+```
 
 ## Security
 
