@@ -208,7 +208,7 @@ async def query(req: QueryRequest):
         json=qdrant_body,
     )
     resp.raise_for_status()
-    points = resp.json().get("points", [])
+    points = resp.json().get("result", {}).get("points", [])
 
     # If filtered search returned nothing, retry without filters so we
     # fall back to pure vector similarity instead of returning empty.
@@ -220,7 +220,7 @@ async def query(req: QueryRequest):
             json=qdrant_body,
         )
         resp.raise_for_status()
-        points = resp.json().get("points", [])
+        points = resp.json().get("result", {}).get("points", [])
 
     if points:
         scores = [p["score"] for p in points]
