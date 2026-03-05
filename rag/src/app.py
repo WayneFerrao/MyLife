@@ -128,13 +128,17 @@ async def ingest(req: IngestRequest):
     Raises:
         httpx.HTTPStatusError: If Qdrant upsert fails.
     """
-    try:
-        metadata = await extract_metadata(req.text)
-    except Exception:
-        log.warning("Metadata extraction failed, using fallback")
-        metadata = {"topic": "unknown", "tags": []}
+    async def _extract():
+        try:
+            return await extract_metadata(req.text)
+        except Exception:
+            log.warning("Metadata extraction failed, using fallback")
+            return {"topic": "unknown", "tags": []}
 
-    vector = await embed(req.text, prefix="search_document")
+    metadata, vector = await asyncio.gather(
+        _extract(),
+        embed(req.text, prefix="search_document"),
+    )
     point_id = str(uuid.uuid4())
     payload = {
         "text": req.text,

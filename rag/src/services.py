@@ -157,6 +157,7 @@ async def extract_metadata(text: str) -> dict:
             "format": METADATA_SCHEMA,
             "stream": False,
             "options": {"temperature": 0},
+            "think": False,
         },
     )
     resp.raise_for_status()
@@ -240,6 +241,7 @@ async def extract_query_filters(text: str) -> dict:
             "format": QUERY_FILTER_SCHEMA,
             "stream": False,
             "options": {"temperature": 0},
+            "think": False,
         },
     )
     resp.raise_for_status()
