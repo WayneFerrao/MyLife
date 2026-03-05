@@ -40,8 +40,8 @@ Designed as a reusable, hands-on blueprint — experiment, extend, and adapt you
                "name": "qwen3.5:9b",
                "reasoning": false,
                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
-               "contextWindow": 16192,
-               "maxTokens": 16192
+               "contextWindow": 32768,
+               "maxTokens": 32768
              }
            ]
          }
