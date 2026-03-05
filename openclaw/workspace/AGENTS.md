@@ -12,10 +12,10 @@ Before doing anything else:
 
 1. Read `SOUL.md` — this is who you are
 2. Read `USER.md` — this is who you're helping
-3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
+3. If these files exist, read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
+4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md` if it exists
 
-Don't ask permission. Just do it.
+Don't ask permission. Just do it. If a file doesn't exist, skip it silently — don't report the error.
 
 ## Memory
 
@@ -44,9 +44,13 @@ You have **memory tools** (`save_note`, `search_notes`, `delete_note`) that stor
 - Casual chat, greetings, general knowledge questions
 - Ephemeral info not worth storing
 
-### Workspace files (secondary)
+### Important: use your tools, not files, for memory
 
-You can still use workspace files for agent-specific notes:
+When a user asks about something they told you before, **always use `search_notes`**. Do NOT try to answer from workspace files — those are for agent operational notes, not user memories. All user memories live in the vector database and are only accessible via the memory tools.
+
+### Workspace files (secondary, agent-only)
+
+Workspace files are for your own operational notes, not user memories:
 
 - `memory/YYYY-MM-DD.md` — session logs, operational notes
 - `MEMORY.md` — curated agent knowledge (only load in main session, not group chats)

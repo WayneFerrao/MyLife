@@ -176,15 +176,21 @@ async def query(req: QueryRequest):
     Raises:
         httpx.HTTPStatusError: If Qdrant query fails.
     """
-    # Extract structured filters from the query (best-effort).
-    try:
-        filters = await extract_query_filters(req.text)
-        log.info("Query filters: %s", filters)
-    except Exception:
-        log.warning("Query filter extraction failed, using pure vector search")
-        filters = {}
+    # Run filter extraction and embedding in parallel to cut latency.
+    # Filter extraction is best-effort — falls back to pure vector search.
+    async def _extract_filters():
+        try:
+            f = await extract_query_filters(req.text)
+            log.info("Query filters: %s", f)
+            return f
+        except Exception:
+            log.warning("Query filter extraction failed, using pure vector search")
+            return {}
 
-    vector = await embed(req.text, prefix="search_query")
+    filters, vector = await asyncio.gather(
+        _extract_filters(),
+        embed(req.text, prefix="search_query"),
+    )
 
     qdrant_body: dict = {"query": vector, "with_payload": True, "limit": req.limit}
     qdrant_filter = build_qdrant_filter(filters)
