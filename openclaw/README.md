@@ -47,12 +47,13 @@ Running `docker compose up -d` starts a single container: **openclaw-gateway**. 
 
 ## Storage
 
-| Path          | Purpose                                      | Configured via          |
-| ------------- | ------------------------------------         | ----------------------- |
-| `./config`    | Agent configuration, memory, and credentials | `OPENCLAW_CONFIG_DIR`   |
-| `./workspace` | Agent workspace data                         | `OPENCLAW_WORKSPACE_DIR`|
+| Path           | Purpose                                      | Configured via            |
+| -------------- | -------------------------------------------- | ------------------------- |
+| `./config`     | Agent configuration, memory, and credentials | `OPENCLAW_CONFIG_DIR`     |
+| `./workspace`  | Agent workspace data                         | `OPENCLAW_WORKSPACE_DIR`  |
+| `./extensions` | Plugin source code (tracked in git)          | `OPENCLAW_EXTENSIONS_DIR` |
 
-Both directories are created automatically on first run and excluded from version control via `.gitignore`.
+`config/` and `workspace/` are created on first run and excluded from version control. `extensions/` is tracked in git (it contains plugin source code), but `node_modules/` inside each extension is gitignored since dependencies are installed automatically at container startup.
 
 ## Model Providers
 
@@ -158,6 +159,64 @@ docker compose run --rm --entrypoint "node dist/index.js onboard" openclaw-gatew
 # Pull latest image and restart
 docker compose pull && docker compose up -d
 ```
+
+## Plugins
+
+OpenClaw's agent can be extended with custom tools via [plugins](https://docs.openclaw.ai/tools/plugin). Plugins are TypeScript modules that register tools using `api.registerTool()`. At container startup, the gateway automatically installs each plugin's npm dependencies and loads it.
+
+### Included Plugin: RAG Memory
+
+The `extensions/rag-memory/` plugin gives the agent three tools for personal memory, backed by the [RAG service](../rag/):
+
+| Tool | Description |
+| ---- | ----------- |
+| `save_note` | Store a note with automatic metadata extraction (topic, people, dates, tags) |
+| `search_notes` | Semantic search across saved notes using natural language |
+| `delete_note` | Remove a note by ID |
+
+The plugin connects to the RAG service at `http://rag:18790` over the shared Docker network.
+
+#### Enabling the memory plugin
+
+1. Set up and start the RAG service first (see [`../rag/README.md`](../rag/README.md)). The RAG setup script generates an API key and adds it to your OpenClaw `.env` as `RAG_API_KEY`.
+
+2. The plugin config in `config/openclaw.json` references the key via env var interpolation:
+
+   ```json
+   {
+     "plugins": {
+       "rag-memory": {
+         "ragApiKey": "${RAG_API_KEY}"
+       }
+     }
+   }
+   ```
+
+3. Restart OpenClaw to load the plugin:
+
+   ```sh
+   docker compose up -d --force-recreate
+   ```
+
+4. Check the gateway logs to confirm the plugin loaded:
+
+   ```sh
+   docker compose logs openclaw-gateway | grep -i plugin
+   ```
+
+The agent will automatically use `save_note` when users share personal info and `search_notes` when they ask about past events.
+
+### Writing Your Own Plugin
+
+Create a directory under `extensions/` with these files:
+
+| File | Purpose |
+| ---- | ------- |
+| `openclaw.plugin.json` | Plugin manifest (id, config schema) |
+| `package.json` | Node package with `"openclaw": { "extensions": ["./index.ts"] }` |
+| `index.ts` | Default export with `register(api)` method |
+
+See the [OpenClaw plugin docs](https://docs.openclaw.ai/tools/plugin) and `extensions/rag-memory/` for a working example.
 
 ## Networking
 

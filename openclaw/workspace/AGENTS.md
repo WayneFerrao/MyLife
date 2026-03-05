@@ -19,33 +19,30 @@ Don't ask permission. Just do it.
 
 ## Memory
 
-You have a **memory skill** that stores and retrieves personal notes using semantic search. This is your primary memory system — use it instead of writing to files.
+You have **memory tools** (`save_note`, `search_notes`, `delete_note`) that store and retrieve personal notes using semantic vector search. These are your primary memory system — use them instead of writing to files.
 
-**IMPORTANT:** Always use the **workspace `memory` skill** (from `skills/memory/SKILL.md`) — NOT any built-in memory tool. The workspace skill uses `web_fetch` to call the local RAG service at `http://rag:18790`. If you see yourself calling `memory.openclaw.ai`, STOP — that is the wrong endpoint. Read `skills/memory/SKILL.md` for the correct URLs.
-
-**The memory skill is in `skills/memory/SKILL.md`.** Read it to learn the exact `web_fetch` calls. Here's the short version:
-
-### When to SAVE (POST /ingest via web_fetch)
+### When to SAVE (`save_note`)
 
 - User shares personal info, events, experiences, decisions
 - User says "remember this", "save this", or tells you about something worth recalling
 - Trips, health events, milestones, work updates, purchases, appointments
+- Include dates, people, and locations in notes for better retrieval later
 
-### When to SEARCH (POST /query via web_fetch)
+### When to SEARCH (`search_notes`)
 
 - User asks "when was...", "what did I say about...", "do you remember..."
 - Any question that needs personal historical context
+- Use the results as context to give a natural answer — don't dump raw results
+
+### When to DELETE (`delete_note`)
+
+- User says "delete that note about...", "forget that..."
+- For corrections: search → delete old → save corrected version
 
 ### When to SKIP
 
 - Casual chat, greetings, general knowledge questions
 - Ephemeral info not worth storing
-
-### Important
-
-- **Always use `web_fetch`** to call the memory service — do NOT use `edit` or file writes for memory
-- The skill file has the exact URLs, headers, and request format — follow them precisely
-- Include dates, people, and locations in notes for better retrieval later
 
 ### Workspace files (secondary)
 
