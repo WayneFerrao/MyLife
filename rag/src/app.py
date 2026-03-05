@@ -201,6 +201,7 @@ async def query(req: QueryRequest):
     qdrant_filter = build_qdrant_filter(filters)
     if qdrant_filter:
         qdrant_body["filter"] = qdrant_filter
+        log.info("Qdrant filter: %s", qdrant_filter)
 
     resp = await http.post(
         f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
@@ -208,6 +209,18 @@ async def query(req: QueryRequest):
     )
     resp.raise_for_status()
     points = resp.json().get("points", [])
+
+    # If filtered search returned nothing, retry without filters so we
+    # fall back to pure vector similarity instead of returning empty.
+    if not points and qdrant_filter:
+        log.info("Filtered query returned 0 results, retrying without filter")
+        qdrant_body.pop("filter")
+        resp = await http.post(
+            f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
+            json=qdrant_body,
+        )
+        resp.raise_for_status()
+        points = resp.json().get("points", [])
 
     results = [
         QueryResult(
