@@ -43,6 +43,18 @@ if grep -q '<your-anthropic-api-key>' .env; then
   echo ""
 fi
 
+# ── Set Ollama keep-alive to prevent GPU discovery timeouts on reload ────────
+# Without this, Ollama unloads the model after 5 minutes of inactivity, and
+# reloading can fail GPU discovery on Windows, causing CPU fallback or 500s.
+if [ -z "${OLLAMA_KEEP_ALIVE:-}" ]; then
+  echo "Setting OLLAMA_KEEP_ALIVE=-1 (keep models loaded permanently)"
+  export OLLAMA_KEEP_ALIVE=-1
+  echo ""
+  echo "NOTE: To persist this across reboots, add to your shell profile:"
+  echo "  export OLLAMA_KEEP_ALIVE=-1"
+  echo ""
+fi
+
 # ── Run onboarding wizard ────────────────────────────────────────────────────
 echo "Starting onboarding wizard..."
 echo "Follow the interactive prompts to configure your agent."
