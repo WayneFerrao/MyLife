@@ -188,8 +188,8 @@ async def query(req: QueryRequest):
             f = await extract_query_filters(req.text)
             log.info("Query filters: %s", f)
             return f
-        except Exception:
-            log.warning("Query filter extraction failed, using pure vector search")
+        except Exception as e:
+            log.warning("Query filter extraction failed (%s: %s), using pure vector search", type(e).__name__, e)
             return {}
 
     filters, vector = await asyncio.gather(
@@ -222,6 +222,10 @@ async def query(req: QueryRequest):
         resp.raise_for_status()
         points = resp.json().get("points", [])
 
+    if points:
+        scores = [p["score"] for p in points]
+        log.info("Qdrant returned %d points, scores: %s", len(points), [round(s, 3) for s in scores])
+
     results = [
         QueryResult(
             id=p["id"],
@@ -232,6 +236,7 @@ async def query(req: QueryRequest):
         for p in points
         if p["score"] >= SCORE_THRESHOLD
     ]
+    log.info("After score threshold (%.2f): %d results", SCORE_THRESHOLD, len(results))
 
     # Re-sort by time when the query implies recency/chronology.
     time_sort = filters.get("time_sort", "relevance")

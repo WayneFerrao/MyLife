@@ -246,7 +246,9 @@ async def extract_query_filters(text: str) -> dict:
         },
     )
     resp.raise_for_status()
-    return json.loads(resp.json()["message"]["content"])
+    raw_content = resp.json()["message"]["content"]
+    log.debug("Query filter raw response: %s", raw_content[:500])
+    return json.loads(raw_content)
 
 
 def build_qdrant_filter(filters: dict) -> dict | None:
