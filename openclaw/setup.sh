@@ -14,6 +14,16 @@ if ! docker compose version &>/dev/null; then
   exit 1
 fi
 
+# ── Onboarding mode ──────────────────────────────────────────────────────────
+echo ""
+echo "Setup mode:"
+echo "  1) Auto   — apply defaults and configure non-interactively (recommended)"
+echo "  2) Wizard — run the interactive CLI onboarding wizard"
+echo ""
+printf "Choice [1]: "
+read -r SETUP_MODE
+SETUP_MODE=${SETUP_MODE:-1}
+
 # ── Create .env from example if it doesn't exist ────────────────────────────
 if [ ! -f .env ]; then
   cp .env-example .env
@@ -34,50 +44,139 @@ else
   echo "Using existing gateway token from .env"
 fi
 
-# ── Prompt for API key if still using the placeholder ────────────────────────
-if grep -q '<your-anthropic-api-key>' .env; then
-  echo ""
-  echo "No model provider API key configured in .env."
-  echo "Edit .env and add at least one API key before starting the gateway."
-  echo "See the Model Providers section in README.md for options."
-  echo ""
-fi
+if [ "$SETUP_MODE" = "1" ]; then
+  # ── Prompt for API key if still using the placeholder ──────────────────────
+  if grep -q '<your-anthropic-api-key>' .env; then
+    echo ""
+    echo "No model provider API key configured in .env."
+    echo "Edit .env and add at least one API key before starting the gateway."
+    echo "See the Model Providers section in README.md for options."
+    echo ""
+  fi
+  # ── Configure openclaw.json via OpenClaw CLI ───────────────────────────────
+  CONFIG_FILE="./config/openclaw.json"
 
-# ── Run onboarding wizard ────────────────────────────────────────────────────
-echo "Starting onboarding wizard..."
-echo "Follow the interactive prompts to configure your agent."
-echo ""
-docker compose run --rm --entrypoint "node dist/index.js onboard" openclaw-gateway
+  OLLAMA_BASE_URL=$(grep -E '^OLLAMA_BASE_URL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  OLLAMA_API_KEY=$(grep -E '^OLLAMA_API_KEY=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  OLLAMA_API_KEY=${OLLAMA_API_KEY:-ollama-local}
+  OLLAMA_MODEL=$(grep -E '^OLLAMA_MODEL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.5:9b}
 
-# ── Patch config for Docker environment ──────────────────────────────────────
-CONFIG_FILE="./config/openclaw.json"
-if [ -f "$CONFIG_FILE" ]; then
-  # The onboarding wizard generates config assuming a native install.
-  # Docker requires the gateway to bind to a non-loopback address for port
-  # forwarding, which in turn requires explicit CORS origins for the web UI.
-  NEEDS_PATCH=false
-
-  if grep -q '"bind": "loopback"' "$CONFIG_FILE"; then
-    NEEDS_PATCH=true
+  WHATSAPP_ALLOW_FROM=$(grep -E '^WHATSAPP_ALLOW_FROM=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  # Clear placeholder value so we can treat empty/unset uniformly
+  if [ "$WHATSAPP_ALLOW_FROM" = "<your-phone-number>" ]; then
+    WHATSAPP_ALLOW_FROM=""
   fi
 
-  if ! grep -q '"allowedOrigins"' "$CONFIG_FILE"; then
-    NEEDS_PATCH=true
+  # ── Prompt for WhatsApp phone number if not set ────────────────────────────
+  if [ -z "$WHATSAPP_ALLOW_FROM" ]; then
+    echo ""
+    printf "WhatsApp phone number in E.164 format (e.g. +12065551234), or press Enter to skip: "
+    read -r WHATSAPP_ALLOW_FROM
+    if [ -n "$WHATSAPP_ALLOW_FROM" ]; then
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|WHATSAPP_ALLOW_FROM=.*|WHATSAPP_ALLOW_FROM=$WHATSAPP_ALLOW_FROM|" .env
+      else
+        sed -i "s|WHATSAPP_ALLOW_FROM=.*|WHATSAPP_ALLOW_FROM=$WHATSAPP_ALLOW_FROM|" .env
+      fi
+      echo "Saved WhatsApp number to .env"
+    else
+      echo "Skipped — you can set it later via: openclaw config set channels.whatsapp.allowFrom '[\"...\"]'"
+    fi
   fi
 
-  if [ "$NEEDS_PATCH" = true ]; then
-    # Use python3 (available on macOS and most Linux) to patch JSON reliably
-    python3 -c "
-import json, sys
-with open('$CONFIG_FILE', 'r') as f:
-    config = json.load(f)
-gw = config.setdefault('gateway', {})
-gw['bind'] = 'lan'
-gw.setdefault('controlUi', {})['allowedOrigins'] = ['http://localhost:18789']
-with open('$CONFIG_FILE', 'w') as f:
-    json.dump(config, f, indent=2)
-    f.write('\n')
-"
+  # Bootstrap an empty config if none exists so the CLI has a file to work with
+  if [ ! -f "$CONFIG_FILE" ]; then
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    echo '{}' > "$CONFIG_FILE"
+    echo "Initialized empty config"
+  fi
+
+  # Build the Ollama model entry as a JSON string
+  OLLAMA_MODEL_JSON=$(printf '[{"id":"%s","name":"%s","reasoning":false,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":131072,"maxTokens":8192}]' \
+    "$OLLAMA_MODEL" "$OLLAMA_MODEL")
+
+  # Build optional WhatsApp allowFrom config line
+  WHATSAPP_CFG=""
+  if [ -n "$WHATSAPP_ALLOW_FROM" ]; then
+    WHATSAPP_DM_POLICY="allowlist"
+    WHATSAPP_CFG="cfg channels.whatsapp.allowFrom '[\"$WHATSAPP_ALLOW_FROM\"]'"
+  else
+    WHATSAPP_DM_POLICY="open"
+  fi
+
+  echo "Applying config via OpenClaw CLI..."
+  docker compose run --rm --entrypoint sh openclaw-gateway -c "
+    set -e
+    cfg() { node dist/index.js config set \"\$@\" 2>&1 | grep -Ev '^🦞|^Config overwrite|Failed to discover Ollama' || true; }
+
+    # Required: gateway mode (blocks startup if unset), auth, and Docker networking
+    cfg gateway.mode             local
+    cfg gateway.auth.mode        token
+    cfg gateway.auth.token       '$TOKEN'
+    cfg gateway.bind             lan
+    cfg gateway.controlUi.allowedOrigins '[\"http://localhost:18789\"]'
+
+    # Ollama provider — set models array before models.mode to pass validation,
+    # then set baseUrl last so it overrides any URL auto-discovered when api is set
+    cfg models.providers.ollama.apiKey   '$OLLAMA_API_KEY'
+    cfg models.providers.ollama.api      ollama
+    cfg models.providers.ollama.models   '$OLLAMA_MODEL_JSON'
+    cfg models.mode                      merge
+    cfg models.providers.ollama.baseUrl  '$OLLAMA_BASE_URL'
+
+    # Default model for agents
+    cfg agents.defaults.model.primary  'ollama/$OLLAMA_MODEL'
+    cfg agents.defaults.models         '{\"ollama/$OLLAMA_MODEL\":{}}'
+
+    # WhatsApp channel — set allowFrom before dmPolicy to pass validation
+    cfg channels.whatsapp.enabled      true
+    $WHATSAPP_CFG
+    cfg channels.whatsapp.dmPolicy     '$WHATSAPP_DM_POLICY'
+  "
+  echo "Config applied (model: $OLLAMA_MODEL)"
+
+  # ── Start gateway and show WhatsApp QR if number was configured ──────────
+  if [ -n "$WHATSAPP_ALLOW_FROM" ]; then
+    echo ""
+    echo "Starting gateway..."
+    docker compose up -d
+
+    echo "Waiting for gateway to be ready..."
+    for i in $(seq 1 30); do
+      if curl -sf http://127.0.0.1:18789/healthz >/dev/null 2>&1; then
+        echo "Gateway ready."
+        break
+      fi
+      sleep 1
+    done
+
+    echo ""
+    echo "Scan the QR code below with WhatsApp to link your account:"
+    echo ""
+    docker compose exec openclaw-gateway node dist/index.js channels login --channel whatsapp --verbose
+  fi
+else
+  # ── Wizard mode: run onboarding then patch config for Docker ──────────────
+  CONFIG_FILE="./config/openclaw.json"
+  if [ -f "$CONFIG_FILE" ]; then
+    rm "$CONFIG_FILE"
+    echo "Cleared existing config for fresh onboarding"
+  fi
+  echo "Starting onboarding wizard..."
+  echo "Follow the interactive prompts to configure your agent."
+  echo ""
+  docker compose run --rm --entrypoint "node dist/index.js onboard" openclaw-gateway
+
+  # Patch config for Docker: bind must be lan, controlUi needs allowedOrigins
+  if [ -f "$CONFIG_FILE" ]; then
+    docker compose run --rm --entrypoint sh openclaw-gateway -c "
+      set -e
+      cfg() { node dist/index.js config set \"\$@\" 2>&1 | grep -Ev '^🦞|^Config overwrite' || true; }
+      cfg gateway.bind                         lan
+      cfg gateway.controlUi.allowedOrigins     '[\"http://localhost:18789\"]'
+    "
     echo "Patched config for Docker (bind: lan, allowedOrigins: localhost:18789)"
   fi
 fi
@@ -90,32 +189,26 @@ echo "============================================"
 echo ""
 echo "Next steps:"
 echo ""
-echo "  1. Start the gateway:"
-echo "     docker compose up -d"
+echo "  1. (Re)start the gateway to apply config:"
+echo "     docker compose restart  (if already running)"
+echo "     docker compose up -d    (if not yet started)"
 echo ""
-echo "  2. Open the web UI:"
+echo "  2. Open the web UI and connect with your token:"
 echo "     http://localhost:18789"
+echo "     Token: $TOKEN"
 echo ""
-echo "  3. When prompted, paste your gateway token and click Connect:"
-echo "     $TOKEN"
+echo "  3. Approve devices (browser + local machine):"
 echo ""
-echo "  4. Approve devices (browser + local machine):"
-echo ""
-echo "     Before the dashboard works and before you can run 'openclaw devices list'"
-echo "     locally, you must first approve both the browser and your local machine"
-echo "     using the long docker compose exec command."
-echo ""
-echo "     a) List pending device requests:"
+echo "     Via docker (always works):"
 echo "        docker compose exec openclaw-gateway node dist/index.js devices list"
+echo "        docker compose exec openclaw-gateway node dist/index.js devices approve <requestId>"
 echo ""
-echo "     b) Approve the browser device:"
-echo "        docker compose exec openclaw-gateway node dist/index.js devices approve <browser-requestId>"
-echo ""
-echo "     c) Approve your local machine (the device that runs 'openclaw devices list'):"
-echo "        docker compose exec openclaw-gateway node dist/index.js devices approve <local-machine-requestId>"
-echo ""
-echo "     Once both devices are approved, the dashboard will be fully functional"
-echo "     and you can use the local CLI shorthand instead:"
+echo "     Via local CLI (once paired):"
 echo "        openclaw devices list"
 echo "        openclaw devices approve <requestId>"
 echo ""
+if [ -n "${WHATSAPP_ALLOW_FROM:-}" ] && [ "${SETUP_MODE:-1}" = "1" ]; then
+echo "  4. Link WhatsApp (if not already done above):"
+echo "     docker compose exec openclaw-gateway node dist/index.js channels login --channel whatsapp --verbose"
+echo ""
+fi
