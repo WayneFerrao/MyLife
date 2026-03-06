@@ -1,0 +1,242 @@
+# Root orchestration for all MyLife services.
+#
+# Start services:  docker compose up -d
+# Stop services:   docker compose down
+# Rebuild RAG:     docker compose up -d --build --force-recreate rag
+#
+# Which optional services start is controlled by COMPOSE_PROFILES in .env
+# (set during `make setup` / `bash setup.sh`). No --profile flags needed.
+#
+# Ollama must be installed natively unless the ollama profile is enabled.
+# See https://ollama.com/download
+
+name: mylife
+
+networks:
+  shared:
+    name: mylife-shared
+    # Not external — Compose creates it automatically.
+    # Per-service compose files keep external: true for standalone use.
+
+services:
+
+  # ── Core services (always started) ──────────────────────────────────
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: always
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    environment:
+      # When set, all REST/gRPC requests require the api-key header.
+      # Dashboard prompts for it in-browser.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+    configs:
+      - source: qdrant_config
+        target: /qdrant/config/production.yaml
+    volumes:
+      - ./qdrant/qdrant_data:/qdrant/storage
+    networks:
+      - shared
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  rag:
+    build: ./rag
+    ports:
+      - "127.0.0.1:18790:18790"
+    env_file:
+      - ./rag/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - shared
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:18790/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  openclaw-gateway:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    ports:
+      - "127.0.0.1:18789:18789"
+    env_file:
+      - ./openclaw/.env
+    environment:
+      HOME: /home/node
+      TERM: xterm-256color
+    volumes:
+      - ${OPENCLAW_CONFIG_DIR:-./openclaw/config}:/home/node/.openclaw
+      - ${OPENCLAW_WORKSPACE_DIR:-./openclaw/workspace}:/home/node/.openclaw/workspace
+      - ${OPENCLAW_EXTENSIONS_DIR:-./openclaw/extensions}:/home/node/extensions
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - shared
+    # Auto-install plugins then launch the gateway
+    command:
+      - sh
+      - -c
+      - |
+        for dir in /home/node/extensions/*/; do
+          if [ -f "$${dir}package.json" ] && grep -q '"dependencies"' "$${dir}package.json" 2>/dev/null; then
+            echo "[startup] installing npm deps: $$dir"
+            (cd "$$dir" && npm install --omit=dev) || true
+          fi
+          echo "[startup] installing plugin: $$dir"
+          node dist/index.js plugins install -l "$$dir" || true
+        done
+        exec node dist/index.js gateway --bind $${OPENCLAW_GATEWAY_BIND:-lan} --port 18789
+    restart: unless-stopped
+    init: true
+    depends_on:
+      rag:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:18789/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Optional: Ollama in Docker (profile: ollama) ────────────────────
+  # Enable via COMPOSE_PROFILES=ollama in .env, or install natively instead.
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ollama]
+    ports:
+      - "127.0.0.1:11434:11434"
+    environment:
+      OLLAMA_HOST: ${OLLAMA_HOST:-0.0.0.0:11434}
+      OLLAMA_FLASH_ATTENTION: ${OLLAMA_FLASH_ATTENTION:-1}
+      OLLAMA_KV_CACHE_TYPE: ${OLLAMA_KV_CACHE_TYPE:-q8_0}
+    volumes:
+      - ./ollama/models:/root/.ollama
+    networks:
+      - shared
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:11434/api/tags"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 8g
+
+  # ── Optional: Immich photo management (profile: immich) ─────────────
+  # Enable via COMPOSE_PROFILES=immich in .env.
+
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    profiles: [immich]
+    volumes:
+      - ${UPLOAD_LOCATION:-./immich/library}:/data
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - ./immich/.env
+    ports:
+      - "2283:2283"
+    depends_on:
+      - immich-redis
+      - immich-database
+    restart: always
+    healthcheck:
+      disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    profiles: [immich]
+    volumes:
+      - immich-model-cache:/cache
+    env_file:
+      - ./immich/.env
+    restart: always
+    healthcheck:
+      disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 4g
+
+  immich-redis:
+    container_name: immich_redis
+    image: docker.io/valkey/valkey:9@sha256:546304417feac0874c3dd576e0952c6bb8f06bb4093ea0c9ca303c73cf458f63
+    profiles: [immich]
+    healthcheck:
+      test: redis-cli ping || exit 1
+    restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  immich-database:
+    container_name: immich_postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    profiles: [immich]
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_DB: ${DB_DATABASE_NAME:-immich}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - ${DB_DATA_LOCATION:-./immich/postgres}:/var/lib/postgresql/data
+    shm_size: 128mb
+    restart: always
+    healthcheck:
+      disable: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+configs:
+  qdrant_config:
+    content: |
+      log_level: INFO
+
+volumes:
+  immich-model-cache:

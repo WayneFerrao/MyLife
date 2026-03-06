@@ -12,18 +12,32 @@ from fastapi import Header, HTTPException
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
+# Optional — when set, all Qdrant HTTP requests include the api-key header.
+# Matches the service.api_key value configured in Qdrant's production.yaml.
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "qwen3.5:9b")
 COLLECTION = os.environ.get("COLLECTION_NAME", "notes")
 API_KEY = os.environ["RAG_API_KEY"]  # required — fail fast if missing
 ALLOW_SEED = os.environ.get("ALLOW_SEED", "false").lower() == "true"
-VECTOR_DIM = 768  # nomic-embed-text output dimensions
+# Each embedding model outputs vectors of a specific dimension. This must
+# match the model set in EMBED_MODEL. Common values:
+#   nomic-embed-text=768, mxbai-embed-large=1024, all-minilm=384
+VECTOR_DIM = int(os.environ.get("VECTOR_DIM", "768"))
+# nomic-embed-text requires task prefixes ("search_document:", "search_query:")
+# for optimal retrieval quality. Most other embedding models don't use prefixes
+# and their quality may degrade if prefixes are applied. Set to false for
+# non-nomic models.
+EMBED_PREFIX = os.environ.get("EMBED_PREFIX", "true").lower() == "true"
 SCORE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "0.3"))  # drop results below this cosine similarity
+# Timeout for upstream HTTP calls (Ollama, Qdrant). First requests may be slow
+# while Ollama loads a model into memory.
+HTTP_TIMEOUT = float(os.environ.get("HTTP_TIMEOUT", "60"))
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rag")
 
-http = httpx.AsyncClient(timeout=30.0)
+http = httpx.AsyncClient(timeout=HTTP_TIMEOUT)
 
 # JSON schema passed to Ollama's `format` parameter to force structured metadata output.
 METADATA_SCHEMA = {
@@ -92,7 +106,8 @@ async def verify_api_key(x_api_key: str = Header(...)):
 async def embed(text: str, prefix: str = "search_document") -> list[float]:
     """Generate a vector embedding for the given text via Ollama.
 
-    nomic-embed-text requires task prefixes for optimal retrieval quality:
+    When EMBED_PREFIX is enabled (default), nomic-embed-text-style task
+    prefixes are prepended for optimal retrieval quality:
     - "search_document" when storing notes (ingestion)
     - "search_query" when searching (retrieval)
 
@@ -101,17 +116,38 @@ async def embed(text: str, prefix: str = "search_document") -> list[float]:
         prefix: Task prefix for nomic-embed-text. Defaults to "search_document".
 
     Returns:
-        A list of 768 floats representing the embedding vector.
+        A list of floats representing the embedding vector.
 
     Raises:
+        httpx.ConnectError: If Ollama is unreachable.
         httpx.HTTPStatusError: If Ollama returns a non-2xx response.
+        ValueError: If the returned embedding dimension doesn't match VECTOR_DIM.
     """
-    resp = await http.post(
-        f"{OLLAMA_URL}/api/embed",
-        json={"model": EMBED_MODEL, "input": f"{prefix}: {text}"},
-    )
-    resp.raise_for_status()
-    return resp.json()["embeddings"][0]
+    input_text = f"{prefix}: {text}" if EMBED_PREFIX else text
+    try:
+        resp = await http.post(
+            f"{OLLAMA_URL}/api/embed",
+            json={"model": EMBED_MODEL, "input": input_text},
+        )
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        raise httpx.ConnectError(
+            f"Cannot connect to Ollama at {OLLAMA_URL}. "
+            f"Is Ollama running? Check with: curl {OLLAMA_URL}/api/tags"
+        )
+
+    embeddings = resp.json().get("embeddings")
+    if not embeddings or not embeddings[0]:
+        raise ValueError(f"Ollama returned empty embeddings for model '{EMBED_MODEL}'")
+
+    actual_dim = len(embeddings[0])
+    if actual_dim != VECTOR_DIM:
+        raise ValueError(
+            f"Embedding dimension mismatch: model '{EMBED_MODEL}' returned "
+            f"{actual_dim}-dim vectors but VECTOR_DIM is set to {VECTOR_DIM}. "
+            f"Set VECTOR_DIM={actual_dim} in your .env file."
+        )
+    return embeddings[0]
 
 
 async def extract_metadata(text: str) -> dict:
@@ -180,27 +216,88 @@ def normalize_metadata(meta: dict) -> dict:
     return out
 
 
+async def validate_ollama_model(model: str, label: str) -> bool:
+    """Check if a model is available in Ollama. Logs actionable errors if not.
+
+    Args:
+        model: The model name to check (e.g., "nomic-embed-text").
+        label: Human-readable label for log messages (e.g., "embedding").
+
+    Returns:
+        True if the model is available, False otherwise.
+    """
+    try:
+        resp = await http.get(f"{OLLAMA_URL}/api/tags")
+        if resp.status_code != 200:
+            log.warning("Cannot reach Ollama at %s to verify %s model", OLLAMA_URL, label)
+            return False
+        models = [m["name"] for m in resp.json().get("models", [])]
+        model_base = model.split(":")[0]
+        found = any(model in m or model_base in m for m in models)
+        if not found:
+            log.error(
+                "%s model '%s' is not available in Ollama. "
+                "Pull it with: ollama pull %s\n"
+                "  Available models: %s",
+                label.capitalize(), model, model,
+                ", ".join(models) if models else "(none)",
+            )
+        else:
+            log.info("[ok] %s model '%s' available in Ollama", label, model)
+        return found
+    except Exception as e:
+        log.warning("Cannot reach Ollama at %s: %s", OLLAMA_URL, e)
+        return False
+
+
 # ── Qdrant helpers ──────────────────────────────────────────────────
+
+
+def qdrant_headers() -> dict[str, str]:
+    """Return headers for Qdrant HTTP requests, including the API key if configured."""
+    if QDRANT_API_KEY:
+        return {"api-key": QDRANT_API_KEY}
+    return {}
 
 
 async def ensure_collection():
     """Create the Qdrant collection if it doesn't already exist.
 
-    Configures 768-dimension cosine similarity vectors to match
-    nomic-embed-text output. Called on app startup.
+    Configures cosine similarity vectors with dimension matching VECTOR_DIM.
+    If the collection exists but has a different dimension, logs an error
+    with remediation instructions.
 
     Raises:
         httpx.HTTPStatusError: If Qdrant returns a non-2xx response on creation.
     """
-    resp = await http.get(f"{QDRANT_URL}/collections/{COLLECTION}")
+    resp = await http.get(
+        f"{QDRANT_URL}/collections/{COLLECTION}", headers=qdrant_headers()
+    )
     if resp.status_code == 200:
+        existing_dim = (
+            resp.json()
+            .get("result", {})
+            .get("config", {})
+            .get("params", {})
+            .get("vectors", {})
+            .get("size")
+        )
+        if existing_dim and existing_dim != VECTOR_DIM:
+            log.error(
+                "VECTOR_DIM mismatch: collection '%s' has dimension %d but "
+                "VECTOR_DIM is set to %d. Delete the collection and restart, "
+                "or update VECTOR_DIM to match.\n"
+                "  Delete: curl -X DELETE %s/collections/%s",
+                COLLECTION, existing_dim, VECTOR_DIM, QDRANT_URL, COLLECTION,
+            )
         return
     resp = await http.put(
         f"{QDRANT_URL}/collections/{COLLECTION}",
         json={"vectors": {"size": VECTOR_DIM, "distance": "Cosine"}},
+        headers=qdrant_headers(),
     )
     resp.raise_for_status()
-    log.info("Created Qdrant collection '%s'", COLLECTION)
+    log.info("Created Qdrant collection '%s' (dim=%d)", COLLECTION, VECTOR_DIM)
 
 
 async def extract_query_filters(text: str) -> dict:
