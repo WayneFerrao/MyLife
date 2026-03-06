@@ -69,13 +69,13 @@ class HealthResponse(BaseModel):
 
     Attributes:
         status: "ok" if all dependencies are reachable, "degraded" otherwise.
-        ollama: True if Ollama API is responding.
+        llm: True if the LLM provider (Ollama or cloud) is reachable.
         qdrant: True if Qdrant API is responding.
-        embed_model_available: True if the configured embedding model is pulled
-            in Ollama. None if Ollama is unreachable.
+        embed_model_available: True if the configured embedding model is available.
+            None if the provider is unreachable.
     """
 
     status: str
-    ollama: bool
+    llm: bool
     qdrant: bool
     embed_model_available: bool | None = None

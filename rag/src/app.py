@@ -20,6 +20,8 @@ from .models import (
     QueryResponse,
     QueryResult,
 )
+from . import chat
+from . import embed as embed_mod
 from .services import (
     ALLOW_SEED,
     CHAT_MODEL,
@@ -68,12 +70,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Could not create collection on startup: %s", e)
 
-    # Validate Ollama models (non-blocking — service still starts)
+    # Validate Ollama models (non-blocking — service still starts).
+    # Only check models that actually use Ollama as their provider.
     try:
-        await validate_ollama_model(EMBED_MODEL, "embedding")
-        await validate_ollama_model(CHAT_MODEL, "chat")
+        if embed_mod.is_ollama():
+            await validate_ollama_model(EMBED_MODEL, "embedding")
+        else:
+            log.info("Embed provider: %s (skipping Ollama check)", embed_mod.EMBED_PROVIDER)
+        if chat.is_ollama():
+            await validate_ollama_model(CHAT_MODEL, "chat")
+        else:
+            log.info("Chat provider: %s (skipping Ollama check)", chat.CHAT_PROVIDER)
     except Exception as e:
-        log.warning("Ollama validation skipped: %s", e)
+        log.warning("Model validation skipped: %s", e)
 
     yield
     await http.aclose()
@@ -113,32 +122,43 @@ async def handle_timeout(request, exc):
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Check connectivity to Ollama and Qdrant. No auth required.
+    """Check connectivity to upstream services. No auth required.
 
     Returns:
         HealthResponse with dependency status and model availability.
     """
-    ollama_ok = qdrant_ok = embed_model_ok = False
-    try:
-        r = await http.get(f"{OLLAMA_URL}/api/tags")
-        ollama_ok = r.status_code == 200
-        if ollama_ok:
-            models = [m["name"] for m in r.json().get("models", [])]
-            model_base = EMBED_MODEL.split(":")[0]
-            embed_model_ok = any(EMBED_MODEL in m or model_base in m for m in models)
-    except Exception:
-        pass
+    llm_ok = qdrant_ok = embed_model_ok = False
+
+    if embed_mod.is_ollama() or chat.is_ollama():
+        # At least one provider uses Ollama — check it
+        try:
+            r = await http.get(f"{OLLAMA_URL}/api/tags")
+            llm_ok = r.status_code == 200
+            if llm_ok and embed_mod.is_ollama():
+                models = [m["name"] for m in r.json().get("models", [])]
+                model_base = EMBED_MODEL.split(":")[0]
+                embed_model_ok = any(EMBED_MODEL in m or model_base in m for m in models)
+            elif not embed_mod.is_ollama():
+                embed_model_ok = True  # cloud provider manages model availability
+        except Exception:
+            pass
+    else:
+        # All providers are cloud-based — Ollama not needed
+        llm_ok = True
+        embed_model_ok = True
+
     try:
         r = await http.get(f"{QDRANT_URL}/collections", headers=qdrant_headers())
         qdrant_ok = r.status_code == 200
     except Exception:
         pass
-    status = "ok" if (ollama_ok and qdrant_ok) else "degraded"
+
+    status = "ok" if (llm_ok and qdrant_ok) else "degraded"
     return HealthResponse(
         status=status,
-        ollama=ollama_ok,
+        llm=llm_ok,
         qdrant=qdrant_ok,
-        embed_model_available=embed_model_ok if ollama_ok else None,
+        embed_model_available=embed_model_ok if llm_ok else None,
     )
 
 

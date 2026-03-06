@@ -8,6 +8,9 @@ from datetime import date
 import httpx
 from fastapi import Header, HTTPException
 
+from . import chat
+from . import embed as embed_mod
+
 # ── Config ──────────────────────────────────────────────────────────
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://host.docker.internal:11434")
@@ -15,20 +18,16 @@ QDRANT_URL = os.environ.get("QDRANT_URL", "http://host.docker.internal:6333")
 # Optional — when set, all Qdrant HTTP requests include the api-key header.
 # Matches the service.api_key value configured in Qdrant's production.yaml.
 QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "nomic-embed-text")
-CHAT_MODEL = os.environ.get("CHAT_MODEL", "qwen3.5:9b")
+EMBED_MODEL = embed_mod.EMBED_MODEL
+CHAT_MODEL = chat.CHAT_MODEL
 COLLECTION = os.environ.get("COLLECTION_NAME", "notes")
 API_KEY = os.environ["RAG_API_KEY"]  # required — fail fast if missing
 ALLOW_SEED = os.environ.get("ALLOW_SEED", "false").lower() == "true"
 # Each embedding model outputs vectors of a specific dimension. This must
 # match the model set in EMBED_MODEL. Common values:
-#   nomic-embed-text=768, mxbai-embed-large=1024, all-minilm=384
+#   nomic-embed-text=768, mxbai-embed-large=1024, all-minilm=384,
+#   text-embedding-3-small=1536
 VECTOR_DIM = int(os.environ.get("VECTOR_DIM", "768"))
-# nomic-embed-text requires task prefixes ("search_document:", "search_query:")
-# for optimal retrieval quality. Most other embedding models don't use prefixes
-# and their quality may degrade if prefixes are applied. Set to false for
-# non-nomic models.
-EMBED_PREFIX = os.environ.get("EMBED_PREFIX", "true").lower() == "true"
 SCORE_THRESHOLD = float(os.environ.get("SCORE_THRESHOLD", "0.3"))  # drop results below this cosine similarity
 # Timeout for upstream HTTP calls (Ollama, Qdrant). First requests may be slow
 # while Ollama loads a model into memory.
@@ -100,61 +99,28 @@ async def verify_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-# ── Ollama helpers ──────────────────────────────────────────────────
+# ── Embedding helper ───────────────────────────────────────────────
 
 
 async def embed(text: str, prefix: str = "search_document") -> list[float]:
-    """Generate a vector embedding for the given text via Ollama.
+    """Generate a vector embedding via the configured provider (Ollama or cloud).
 
-    When EMBED_PREFIX is enabled (default), nomic-embed-text-style task
-    prefixes are prepended for optimal retrieval quality:
-    - "search_document" when storing notes (ingestion)
-    - "search_query" when searching (retrieval)
+    Dimension validation is intentionally omitted here — Qdrant enforces
+    dimension constraints at insert time, and the startup check in
+    ensure_collection() gives an actionable warning if VECTOR_DIM is wrong.
 
     Args:
         text: The text to embed.
-        prefix: Task prefix for nomic-embed-text. Defaults to "search_document".
+        prefix: Task prefix for nomic-embed-text style models.
 
     Returns:
         A list of floats representing the embedding vector.
-
-    Raises:
-        httpx.ConnectError: If Ollama is unreachable.
-        httpx.HTTPStatusError: If Ollama returns a non-2xx response.
-        ValueError: If the returned embedding dimension doesn't match VECTOR_DIM.
     """
-    input_text = f"{prefix}: {text}" if EMBED_PREFIX else text
-    try:
-        resp = await http.post(
-            f"{OLLAMA_URL}/api/embed",
-            json={"model": EMBED_MODEL, "input": input_text},
-        )
-        resp.raise_for_status()
-    except httpx.ConnectError:
-        raise httpx.ConnectError(
-            f"Cannot connect to Ollama at {OLLAMA_URL}. "
-            f"Is Ollama running? Check with: curl {OLLAMA_URL}/api/tags"
-        )
-
-    embeddings = resp.json().get("embeddings")
-    if not embeddings or not embeddings[0]:
-        raise ValueError(f"Ollama returned empty embeddings for model '{EMBED_MODEL}'")
-
-    actual_dim = len(embeddings[0])
-    if actual_dim != VECTOR_DIM:
-        raise ValueError(
-            f"Embedding dimension mismatch: model '{EMBED_MODEL}' returned "
-            f"{actual_dim}-dim vectors but VECTOR_DIM is set to {VECTOR_DIM}. "
-            f"Set VECTOR_DIM={actual_dim} in your .env file."
-        )
-    return embeddings[0]
+    return await embed_mod.generate(http, text, prefix=prefix)
 
 
 async def extract_metadata(text: str) -> dict:
-    """Extract structured metadata from a note using the chat model.
-
-    Sends the note to Ollama with a JSON schema constraint so the LLM
-    returns structured fields.
+    """Extract structured metadata from a note using the configured chat provider.
 
     Args:
         text: The note text to extract metadata from.
@@ -164,41 +130,25 @@ async def extract_metadata(text: str) -> dict:
         dates_mentioned (list[str]), mood (str | None), tags (list[str]).
 
     Raises:
-        httpx.HTTPStatusError: If Ollama returns a non-2xx response.
+        httpx.HTTPStatusError: If the chat provider returns a non-2xx response.
         json.JSONDecodeError: If the LLM output isn't valid JSON.
     """
-    resp = await http.post(
-        f"{OLLAMA_URL}/api/chat",
-        json={
-            "model": CHAT_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        f"Today's date is {date.today().isoformat()}. "
-                        "Extract metadata from this note. Return JSON with: "
-                        "topic (single lowercase category like 'travel', 'health', 'work', 'family', 'food', 'finance'), "
-                        "people (list of lowercase names or relationships like 'son', 'sarah'), "
-                        "locations (list of lowercase place names like 'toronto', 'miami'), "
-                        "dates_mentioned (list of ISO dates like '2026-02-10' — "
-                        "resolve relative references like 'yesterday', 'last week' to actual dates using today's date; "
-                        "if no date is mentioned at all, use today's date), "
-                        "mood (lowercase string or null), "
-                        "tags (list of short lowercase keyword strings). "
-                        "All string values must be lowercase. "
-                        "Only include fields where you find relevant information."
-                    ),
-                },
-                {"role": "user", "content": text},
-            ],
-            "format": METADATA_SCHEMA,
-            "stream": False,
-            "options": {"temperature": 0},
-            "think": False,
-        },
+    system = (
+        f"Today's date is {date.today().isoformat()}. "
+        "Extract metadata from this note. Return JSON with: "
+        "topic (single lowercase category like 'travel', 'health', 'work', 'family', 'food', 'finance'), "
+        "people (list of lowercase names or relationships like 'son', 'sarah'), "
+        "locations (list of lowercase place names like 'toronto', 'miami'), "
+        "dates_mentioned (list of ISO dates like '2026-02-10' — "
+        "resolve relative references like 'yesterday', 'last week' to actual dates using today's date; "
+        "if no date is mentioned at all, use today's date), "
+        "mood (lowercase string or null), "
+        "tags (list of short lowercase keyword strings). "
+        "All string values must be lowercase. "
+        "Only include fields where you find relevant information."
     )
-    resp.raise_for_status()
-    raw = json.loads(resp.json()["message"]["content"])
+    content = await chat.complete(http, system, text, schema=METADATA_SCHEMA)
+    raw = json.loads(content)
     return normalize_metadata(raw)
 
 
@@ -301,7 +251,7 @@ async def ensure_collection():
 
 
 async def extract_query_filters(text: str) -> dict:
-    """Extract structured filter hints from a search query using the chat model.
+    """Extract structured filter hints from a search query using the configured chat provider.
 
     Identifies people, locations, and tags mentioned in the query so Qdrant
     payload filters can narrow results before vector ranking.  Also determines
@@ -314,38 +264,21 @@ async def extract_query_filters(text: str) -> dict:
         A dict with keys: people, locations, tags (all list[str]) and
         time_sort ("newest_first", "oldest_first", or "relevance").
     """
-    resp = await http.post(
-        f"{OLLAMA_URL}/api/chat",
-        json={
-            "model": CHAT_MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Extract search filters from this query. Return JSON with: "
-                        "topic (single lowercase category like 'travel', 'health', 'work', 'family', 'food', 'finance' — empty string if unclear), "
-                        "people (list of person names or relationships like 'son', 'mom'), "
-                        "locations (list of place names), "
-                        "tags (list of short topic keywords that would help find relevant notes), "
-                        "time_sort ('newest_first' if the query asks about recent/last events, "
-                        "'oldest_first' if it asks about earliest/first events, "
-                        "'relevance' otherwise). "
-                        "Return empty lists if no specific filters are found. "
-                        "All string values must be lowercase."
-                    ),
-                },
-                {"role": "user", "content": text},
-            ],
-            "format": QUERY_FILTER_SCHEMA,
-            "stream": False,
-            "options": {"temperature": 0},
-            "think": False,
-        },
+    system = (
+        "Extract search filters from this query. Return JSON with: "
+        "topic (single lowercase category like 'travel', 'health', 'work', 'family', 'food', 'finance' — empty string if unclear), "
+        "people (list of person names or relationships like 'son', 'mom'), "
+        "locations (list of place names), "
+        "tags (list of short topic keywords that would help find relevant notes), "
+        "time_sort ('newest_first' if the query asks about recent/last events, "
+        "'oldest_first' if it asks about earliest/first events, "
+        "'relevance' otherwise). "
+        "Return empty lists if no specific filters are found. "
+        "All string values must be lowercase."
     )
-    resp.raise_for_status()
-    raw_content = resp.json()["message"]["content"]
-    log.debug("Query filter raw response: %s", raw_content[:500])
-    return json.loads(raw_content)
+    content = await chat.complete(http, system, text, schema=QUERY_FILTER_SCHEMA)
+    log.debug("Query filter raw response: %s", content[:500])
+    return json.loads(content)
 
 
 def build_qdrant_filter(filters: dict) -> dict | None:

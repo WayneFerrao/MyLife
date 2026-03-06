@@ -36,33 +36,103 @@ else
 fi
 echo ""
 
-# ── Step 2: Check Ollama ─────────────────────────────────────────────
+# ── Step 2: Model providers ──────────────────────────────────────────
 
-echo "── Step 2/5: Ollama ──"
+echo "── Step 2/5: Model providers ──"
+echo ""
+
+# -- Embedding provider --
+echo "How will you run embedding models?"
+echo "  1) Ollama (local — requires GPU or Apple Silicon)"
+echo "  2) Cloud API (OpenAI, Gemini, Mistral, etc.)"
+printf "Choice [1]: "
+read -r EMBED_CHOICE
+EMBED_CHOICE="${EMBED_CHOICE:-1}"
+
+EMBED_PROVIDER="ollama"
+EMBED_API_URL=""
+EMBED_API_KEY=""
+EMBED_CLOUD_MODEL=""
+if [ "$EMBED_CHOICE" = "2" ]; then
+  EMBED_PROVIDER="openai"
+  printf "  API base URL (e.g., https://api.openai.com/v1): "
+  read -r EMBED_API_URL
+  printf "  API key: "
+  read -r EMBED_API_KEY
+  printf "  Model name (e.g., text-embedding-3-small): "
+  read -r EMBED_CLOUD_MODEL
+  echo "[ok] Embedding: cloud ($EMBED_CLOUD_MODEL)"
+fi
+
+echo ""
+
+# -- Chat provider --
+echo "How will you run the chat model (for metadata extraction)?"
+echo "  1) Ollama (local — requires GPU or Apple Silicon)"
+echo "  2) Cloud API (OpenAI-compatible: OpenAI, Gemini, Mistral, Groq)"
+echo "  3) Anthropic (Claude)"
+printf "Choice [1]: "
+read -r CHAT_CHOICE
+CHAT_CHOICE="${CHAT_CHOICE:-1}"
+
+CHAT_PROVIDER="ollama"
+CHAT_API_URL=""
+CHAT_API_KEY=""
+CHAT_CLOUD_MODEL=""
+if [ "$CHAT_CHOICE" = "2" ]; then
+  CHAT_PROVIDER="openai"
+  printf "  API base URL (e.g., https://api.openai.com/v1): "
+  read -r CHAT_API_URL
+  printf "  API key: "
+  read -r CHAT_API_KEY
+  printf "  Model name (e.g., gpt-4o-mini): "
+  read -r CHAT_CLOUD_MODEL
+  echo "[ok] Chat: cloud OpenAI-compatible ($CHAT_CLOUD_MODEL)"
+elif [ "$CHAT_CHOICE" = "3" ]; then
+  CHAT_PROVIDER="anthropic"
+  printf "  API key: "
+  read -r CHAT_API_KEY
+  printf "  Model name (e.g., claude-sonnet-4-5-20250514): "
+  read -r CHAT_CLOUD_MODEL
+  echo "[ok] Chat: Anthropic ($CHAT_CLOUD_MODEL)"
+fi
+
+echo ""
+
+# -- Check Ollama if needed --
 OLLAMA_OK=false
-if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-  OLLAMA_OK=true
-  echo "[ok] Ollama is running"
+NEEDS_OLLAMA=false
+[ "$EMBED_PROVIDER" = "ollama" ] && NEEDS_OLLAMA=true
+[ "$CHAT_PROVIDER" = "ollama" ] && NEEDS_OLLAMA=true
 
-  # Check for common models
-  MODELS=$(curl -sf http://localhost:11434/api/tags 2>/dev/null \
-    | python3 -c "import sys,json; print(' '.join(m['name'] for m in json.load(sys.stdin).get('models',[])))" 2>/dev/null \
-    || echo "")
+if [ "$NEEDS_OLLAMA" = true ]; then
+  if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+    OLLAMA_OK=true
+    echo "[ok] Ollama is running"
 
-  if echo "$MODELS" | grep -q "nomic-embed-text"; then
-    echo "[ok] Embedding model 'nomic-embed-text' available"
+    MODELS=$(curl -sf http://localhost:11434/api/tags 2>/dev/null \
+      | python3 -c "import sys,json; print(' '.join(m['name'] for m in json.load(sys.stdin).get('models',[])))" 2>/dev/null \
+      || echo "")
+
+    if [ "$EMBED_PROVIDER" = "ollama" ]; then
+      if echo "$MODELS" | grep -q "nomic-embed-text"; then
+        echo "[ok] Embedding model 'nomic-embed-text' available"
+      else
+        echo "[!] Embedding model not found. Run: ollama pull nomic-embed-text"
+      fi
+    fi
+
+    if [ -n "$MODELS" ]; then
+      echo "    Available models: $MODELS"
+    fi
   else
-    echo "[!] Embedding model not found. Run: ollama pull nomic-embed-text"
-    echo "    (or set EMBED_MODEL in rag/.env to a model you've already pulled)"
-  fi
-
-  if [ -n "$MODELS" ]; then
-    echo "    Available models: $MODELS"
+    echo "[!] Ollama is not reachable at localhost:11434"
+    echo "    Install: https://ollama.com/download"
+    echo "    Then pull models: ollama pull nomic-embed-text && ollama pull qwen3.5:9b"
   fi
 else
-  echo "[!] Ollama is not reachable at localhost:11434"
-  echo "    Install: https://ollama.com/download"
-  echo "    Then pull models: ollama pull nomic-embed-text && ollama pull qwen3.5:9b"
+  OLLAMA_OK=true  # not needed
+  echo "[ok] Using cloud providers — Ollama not required"
 fi
 echo ""
 
@@ -73,6 +143,41 @@ if [ -f rag/.env ]; then
   echo "[ok] rag/.env exists, skipping"
 else
   (cd rag && bash setup.sh)
+fi
+
+# Write provider settings to rag/.env
+if [ -f rag/.env ]; then
+  _update_env() {
+    local file="$1" key="$2" value="$3"
+    if grep -q "^${key}=" "$file" 2>/dev/null; then
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s|^${key}=.*|${key}=${value}|" "$file"
+      else
+        sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+      fi
+    else
+      echo "${key}=${value}" >> "$file"
+    fi
+  }
+
+  _update_env rag/.env EMBED_PROVIDER "$EMBED_PROVIDER"
+  if [ "$EMBED_PROVIDER" != "ollama" ]; then
+    _update_env rag/.env EMBED_API_URL "$EMBED_API_URL"
+    _update_env rag/.env EMBED_API_KEY "$EMBED_API_KEY"
+    [ -n "$EMBED_CLOUD_MODEL" ] && _update_env rag/.env EMBED_MODEL "$EMBED_CLOUD_MODEL"
+    # Cloud embedding dimensions differ — prompt user to set VECTOR_DIM
+    echo "[!] Set VECTOR_DIM in rag/.env to match your cloud model's output dimensions"
+    echo "    (e.g., text-embedding-3-small=1536, text-embedding-3-large=3072)"
+  fi
+
+  _update_env rag/.env CHAT_PROVIDER "$CHAT_PROVIDER"
+  if [ "$CHAT_PROVIDER" != "ollama" ]; then
+    [ -n "$CHAT_API_URL" ] && _update_env rag/.env CHAT_API_URL "$CHAT_API_URL"
+    _update_env rag/.env CHAT_API_KEY "$CHAT_API_KEY"
+    [ -n "$CHAT_CLOUD_MODEL" ] && _update_env rag/.env CHAT_MODEL "$CHAT_CLOUD_MODEL"
+  fi
+
+  echo "[ok] Provider settings written to rag/.env"
 fi
 echo ""
 
@@ -103,7 +208,7 @@ echo "── Step 5/5: Optional services ──"
 PROFILES=""
 
 # Ollama Docker container (for users without a native install)
-if [ "$OLLAMA_OK" = false ]; then
+if [ "$NEEDS_OLLAMA" = true ] && [ "$OLLAMA_OK" = false ]; then
   echo ""
   printf "Ollama isn't running natively. Run it in Docker instead? [y/N]: "
   read -r USE_OLLAMA_DOCKER
@@ -177,11 +282,11 @@ echo ""
 echo "  2. Check health:"
 echo "       make health"
 echo ""
-if [ "$OLLAMA_OK" = false ] && [ -z "$PROFILES" ]; then
+if [ "$NEEDS_OLLAMA" = true ] && [ "$OLLAMA_OK" = false ] && [ -z "$PROFILES" ]; then
   echo "  3. Install and start Ollama:"
   echo "       https://ollama.com/download"
-  echo "       ollama pull nomic-embed-text"
-  echo "       ollama pull qwen3.5:9b"
+  [ "$EMBED_PROVIDER" = "ollama" ] && echo "       ollama pull nomic-embed-text"
+  [ "$CHAT_PROVIDER" = "ollama" ] && echo "       ollama pull qwen3.5:9b"
   echo ""
 fi
 echo "  Dashboards:"

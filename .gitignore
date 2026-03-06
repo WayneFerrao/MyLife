@@ -15,3 +15,5 @@ openclaw/workspace/.openclaw/
 openclaw/workspace/skills/
 openclaw/workspace/memory/
 openclaw/workspace/MEMORY.md
+
+__pycache__/
