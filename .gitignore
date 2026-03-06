@@ -4,6 +4,7 @@ postgres/
 config/
 models/
 qdrant_data/
+backups/
 
 # OpenClaw extensions — track source, ignore installed deps
 openclaw/extensions/*/node_modules/

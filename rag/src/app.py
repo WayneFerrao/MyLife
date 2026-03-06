@@ -22,7 +22,9 @@ from .models import (
 )
 from .services import (
     ALLOW_SEED,
+    CHAT_MODEL,
     COLLECTION,
+    EMBED_MODEL,
     OLLAMA_URL,
     QDRANT_URL,
     SCORE_THRESHOLD,
@@ -34,6 +36,8 @@ from .services import (
     extract_query_filters,
     http,
     log,
+    qdrant_headers,
+    validate_ollama_model,
     verify_api_key,
 )
 
@@ -45,16 +49,32 @@ from .services import (
 async def lifespan(app: FastAPI):
     """Manage app startup and shutdown.
 
-    Startup: creates the Qdrant collection if it doesn't exist.
+    Startup: validates Ollama models, creates Qdrant collection.
     Shutdown: closes the shared httpx async client.
 
     Args:
         app: The FastAPI application instance.
     """
+    # Validate Qdrant connectivity and collection
     try:
         await ensure_collection()
+        log.info("[ok] Qdrant collection '%s' ready", COLLECTION)
+    except httpx.ConnectError:
+        log.error(
+            "Cannot connect to Qdrant at %s. Is it running? "
+            "Start with: docker compose up -d qdrant",
+            QDRANT_URL,
+        )
     except Exception as e:
         log.warning("Could not create collection on startup: %s", e)
+
+    # Validate Ollama models (non-blocking — service still starts)
+    try:
+        await validate_ollama_model(EMBED_MODEL, "embedding")
+        await validate_ollama_model(CHAT_MODEL, "chat")
+    except Exception as e:
+        log.warning("Ollama validation skipped: %s", e)
+
     yield
     await http.aclose()
 
@@ -96,21 +116,30 @@ async def health():
     """Check connectivity to Ollama and Qdrant. No auth required.
 
     Returns:
-        HealthResponse: status ("ok" or "degraded"), ollama (bool), qdrant (bool).
+        HealthResponse with dependency status and model availability.
     """
-    ollama_ok = qdrant_ok = False
+    ollama_ok = qdrant_ok = embed_model_ok = False
     try:
         r = await http.get(f"{OLLAMA_URL}/api/tags")
         ollama_ok = r.status_code == 200
+        if ollama_ok:
+            models = [m["name"] for m in r.json().get("models", [])]
+            model_base = EMBED_MODEL.split(":")[0]
+            embed_model_ok = any(EMBED_MODEL in m or model_base in m for m in models)
     except Exception:
         pass
     try:
-        r = await http.get(f"{QDRANT_URL}/collections")
+        r = await http.get(f"{QDRANT_URL}/collections", headers=qdrant_headers())
         qdrant_ok = r.status_code == 200
     except Exception:
         pass
     status = "ok" if (ollama_ok and qdrant_ok) else "degraded"
-    return HealthResponse(status=status, ollama=ollama_ok, qdrant=qdrant_ok)
+    return HealthResponse(
+        status=status,
+        ollama=ollama_ok,
+        qdrant=qdrant_ok,
+        embed_model_available=embed_model_ok if ollama_ok else None,
+    )
 
 
 @app.post("/ingest", response_model=IngestResponse, dependencies=[Depends(verify_api_key)])
@@ -151,6 +180,7 @@ async def ingest(req: IngestRequest):
     resp = await http.put(
         f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
         json={"points": [{"id": point_id, "vector": vector, "payload": payload}]},
+        headers=qdrant_headers(),
     )
     resp.raise_for_status()
     return IngestResponse(id=point_id, metadata=metadata)
@@ -206,6 +236,7 @@ async def query(req: QueryRequest):
     resp = await http.post(
         f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
         json=qdrant_body,
+        headers=qdrant_headers(),
     )
     resp.raise_for_status()
     points = resp.json().get("result", {}).get("points", [])
@@ -218,6 +249,7 @@ async def query(req: QueryRequest):
         resp = await http.post(
             f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
             json=qdrant_body,
+            headers=qdrant_headers(),
         )
         resp.raise_for_status()
         points = resp.json().get("result", {}).get("points", [])
@@ -266,6 +298,7 @@ async def delete_note(point_id: str):
     resp = await http.post(
         f"{QDRANT_URL}/collections/{COLLECTION}/points/delete?wait=true",
         json={"points": [point_id]},
+        headers=qdrant_headers(),
     )
     resp.raise_for_status()
     return {"deleted": point_id}
@@ -319,6 +352,7 @@ async def seed():
     await http.put(
         f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
         json={"points": points},
+        headers=qdrant_headers(),
     )
 
     return {"seeded": len(results), "notes": results}
