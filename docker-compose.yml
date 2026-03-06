@@ -15,8 +15,9 @@ name: mylife
 networks:
   shared:
     name: mylife-shared
-    # Not external — Compose creates it automatically.
-    # Per-service compose files keep external: true for standalone use.
+    # External — created by `make setup` / `setup.sh`.
+    # Must exist before `docker compose up`. Run `make network` to create it manually.
+    external: true
 
 services:
 
