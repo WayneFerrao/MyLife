@@ -72,6 +72,7 @@ make health
 | `make health`            | Check health of all endpoints                           |
 | `make status`            | Show container status                                   |
 | `make backup`            | Snapshot Qdrant data (timestamped tarball)               |
+| `make restore FILE=...`  | Restore Qdrant data from a backup tarball               |
 | `make reset-vectors`     | Delete Qdrant collection (recreated on next RAG start)  |
 | `make help`              | Show all available targets                              |
 
@@ -141,6 +142,50 @@ OpenClaw's chat model is configured separately in `openclaw/.env` (`OLLAMA_MODEL
 └── ollama/                 # Ollama Docker config (optional)
     └── models/             # Downloaded models
 ```
+
+## Backup & Restore
+
+### Create a backup
+
+```bash
+make backup
+```
+
+Creates a timestamped tarball in `backups/` (e.g., `backups/qdrant-20260306-143000.tar.gz`).
+
+### Restore from backup
+
+```bash
+make down
+rm -rf qdrant/qdrant_data
+tar -xzf backups/qdrant-YYYYMMDD-HHMMSS.tar.gz -C qdrant/
+make up
+```
+
+### Changing embedding models
+
+If you switch to a different embedding model (e.g., from `nomic-embed-text` to `mxbai-embed-large`),
+the vector dimensions will no longer match the existing collection. To handle this:
+
+1. Back up your data: `make backup`
+2. Update `EMBED_MODEL`, `VECTOR_DIM`, and `EMBED_PREFIX` in `rag/.env`
+3. Delete the old collection: `make reset-vectors`
+4. Restart RAG: `make rebuild-rag`
+5. Re-ingest your notes (the old vectors are incompatible with the new model)
+
+## Platform Support
+
+Tested on **macOS**, **Linux**, and **Windows (WSL2)**.
+
+Requirements:
+- Docker 20.10+ and Docker Compose v2
+- `bash`, `curl`, `openssl`, `make` (all pre-installed on macOS and most Linux/WSL distros)
+
+**Windows users**: Run everything inside WSL2, not PowerShell/CMD. Install Docker Desktop
+with the WSL2 backend enabled.
+
+Ollama runs natively on the host. Containers reach it via `host.docker.internal`, which is
+resolved automatically on all platforms through Docker's `host-gateway` mapping.
 
 ## Security
 
