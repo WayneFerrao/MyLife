@@ -42,8 +42,10 @@ services:
     networks:
       - shared
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/6333'"]
-      interval: 15s
+      # Verify the REST API is serving, not just that TCP is open.
+      # Qdrant image lacks curl/wget, so we use bash /dev/tcp + HTTP.
+      test: ["CMD-SHELL", "bash -c '(echo -e \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"200 OK\") 3<>/dev/tcp/127.0.0.1/6333'"]
+      interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
