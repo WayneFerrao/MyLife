@@ -49,10 +49,10 @@ restart-all: ## Restart all core services
 health: ## Check health of all service endpoints
 	@printf "Ollama:   " && curl -sf http://localhost:11434/api/tags > /dev/null 2>&1 \
 		&& echo "ok" || echo "unreachable (install: https://ollama.com/download)"
-	@printf "Qdrant:   " && curl -sf http://localhost:6333/readyz 2>/dev/null \
-		&& echo "" || echo "unreachable"
-	@printf "RAG:      " && curl -sf http://localhost:18790/health 2>/dev/null \
-		|| echo "unreachable"
+	@printf "Qdrant:   " && curl -sf http://localhost:6333/readyz > /dev/null 2>&1 \
+		&& echo "ok" || echo "unreachable"
+	@printf "RAG:      " && curl -sf http://localhost:18790/health > /dev/null 2>&1 \
+		&& echo "ok" || echo "unreachable"
 	@printf "\nOpenClaw: " && curl -sf http://localhost:18789/healthz > /dev/null 2>&1 \
 		&& echo "ok" || echo "unreachable"
 

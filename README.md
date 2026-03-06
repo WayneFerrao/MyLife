@@ -156,11 +156,11 @@ Creates a timestamped tarball in `backups/` (e.g., `backups/qdrant-20260306-1430
 ### Restore from backup
 
 ```bash
-make down
-rm -rf qdrant/qdrant_data
-tar -xzf backups/qdrant-YYYYMMDD-HHMMSS.tar.gz -C qdrant/
-make up
+make restore FILE=backups/qdrant-YYYYMMDD-HHMMSS.tar.gz
 ```
+
+This stops Qdrant, replaces its data directory with the backup, and restarts it.
+All other services (RAG, OpenClaw) keep running.
 
 ### Changing embedding models
 
