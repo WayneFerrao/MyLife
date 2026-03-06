@@ -71,7 +71,7 @@ make health
 | `make logs-openclaw`     | Tail OpenClaw logs                                      |
 | `make health`            | Check health of all endpoints                           |
 | `make status`            | Show container status                                   |
-| `make backup`            | Snapshot Qdrant data (timestamped tarball)               |
+| `make backup`            | Snapshot Qdrant data (timestamped tarball)              |
 | `make restore FILE=...`  | Restore Qdrant data from a backup tarball               |
 | `make reset-vectors`     | Delete Qdrant collection (recreated on next RAG start)  |
 | `make help`              | Show all available targets                              |
