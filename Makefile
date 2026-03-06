@@ -5,7 +5,7 @@ COMPOSE := docker compose
 
 .PHONY: help up down status logs logs-rag logs-openclaw \
         rebuild-rag restart-openclaw restart-all health \
-        setup network backup reset-vectors clean
+        setup network backup restore reset-vectors clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -71,6 +71,19 @@ backup: ## Snapshot Qdrant vector data (timestamped tarball)
 	@mkdir -p backups
 	tar -czf backups/qdrant-$$(date +%Y%m%d-%H%M%S).tar.gz -C qdrant qdrant_data
 	@echo "Backup saved to backups/"
+
+restore: ## Restore Qdrant data from a backup tarball (usage: make restore FILE=backups/qdrant-XXX.tar.gz)
+	@if [ -z "$(FILE)" ]; then echo "Usage: make restore FILE=backups/qdrant-YYYYMMDD-HHMMSS.tar.gz"; \
+		echo ""; echo "Available backups:"; ls -1 backups/qdrant-*.tar.gz 2>/dev/null || echo "  (none)"; exit 1; fi
+	@[ -f "$(FILE)" ] || { echo "Error: $(FILE) not found"; exit 1; }
+	@echo "This will replace current Qdrant data with $(FILE)."
+	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	$(COMPOSE) stop qdrant
+	rm -rf qdrant/qdrant_data
+	tar -xzf $(FILE) -C qdrant/
+	$(COMPOSE) up -d qdrant
+	@echo "Restored from $(FILE). Waiting for Qdrant to start..."
+	@sleep 3 && $(COMPOSE) ps qdrant
 
 reset-vectors: ## Delete and recreate the Qdrant collection (loses all stored notes)
 	@echo "This will delete all stored notes from Qdrant."
