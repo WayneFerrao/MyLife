@@ -13,7 +13,7 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-./config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-./workspace}:/home/node/.openclaw/workspace
-      - ${OPENCLAW_EXTENSIONS_DIR:-./extensions}:/home/node/extensions
+      - ${OPENCLAW_EXTENSIONS_DIR:-./extensions}:/home/node/extensions-src:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -22,13 +22,16 @@ services:
       - sh
       - -c
       - |
+        # Copy extensions from the Windows mount to a proper Linux path and fix perms
+        rm -rf /home/node/extensions
+        cp -a /home/node/extensions-src /home/node/extensions
+        chmod -R 755 /home/node/extensions
+        chown -R node:node /home/node/extensions 2>/dev/null || true
         for dir in /home/node/extensions/*/; do
           if [ -f "$${dir}package.json" ] && grep -q '"dependencies"' "$${dir}package.json" 2>/dev/null; then
             echo "[startup] installing npm deps: $$dir"
             (cd "$$dir" && npm install --omit=dev) || true
           fi
-          echo "[startup] installing plugin: $$dir"
-          node dist/index.js plugins install -l "$$dir" || true
         done
         exec node dist/index.js gateway --bind ${OPENCLAW_GATEWAY_BIND:-lan} --port 18789
     restart: unless-stopped
