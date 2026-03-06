@@ -14,6 +14,14 @@ if ! docker compose version &>/dev/null; then
   exit 1
 fi
 
+# Verify Ollama is reachable from inside Docker (where the gateway will run)
+OLLAMA_CHECK_URL="${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+if ! docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl -sf "$OLLAMA_CHECK_URL/api/version" &>/dev/null; then
+  echo "Error: Ollama is not reachable at $OLLAMA_CHECK_URL"
+  echo "Make sure Ollama is installed and running. See https://ollama.com/download"
+  exit 1
+fi
+
 # ── Onboarding mode ──────────────────────────────────────────────────────────
 echo ""
 echo "Setup mode:"
@@ -40,7 +48,7 @@ if grep -q '<your-gateway-token>' .env; then
   fi
   echo "Generated gateway token"
 else
-  TOKEN=$(grep '^OPENCLAW_GATEWAY_TOKEN=' .env | cut -d'=' -f2)
+  TOKEN=$(grep '^OPENCLAW_GATEWAY_TOKEN=' .env | cut -d'=' -f2 | tr -d '\r')
   echo "Using existing gateway token from .env"
 fi
 
@@ -56,14 +64,14 @@ if [ "$SETUP_MODE" = "1" ]; then
   # ── Configure openclaw.json via OpenClaw CLI ───────────────────────────────
   CONFIG_FILE="./config/openclaw.json"
 
-  OLLAMA_BASE_URL=$(grep -E '^OLLAMA_BASE_URL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  OLLAMA_BASE_URL=$(grep -E '^OLLAMA_BASE_URL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"\r')
   OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-  OLLAMA_API_KEY=$(grep -E '^OLLAMA_API_KEY=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  OLLAMA_API_KEY=$(grep -E '^OLLAMA_API_KEY=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"\r')
   OLLAMA_API_KEY=${OLLAMA_API_KEY:-ollama-local}
-  OLLAMA_MODEL=$(grep -E '^OLLAMA_MODEL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  OLLAMA_MODEL=$(grep -E '^OLLAMA_MODEL=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"\r')
   OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.5:9b}
 
-  WHATSAPP_ALLOW_FROM=$(grep -E '^WHATSAPP_ALLOW_FROM=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"')
+  WHATSAPP_ALLOW_FROM=$(grep -E '^WHATSAPP_ALLOW_FROM=' .env 2>/dev/null | cut -d'=' -f2- | tr -d '"\r')
   # Clear placeholder value so we can treat empty/unset uniformly
   if [ "$WHATSAPP_ALLOW_FROM" = "<your-phone-number>" ]; then
     WHATSAPP_ALLOW_FROM=""
