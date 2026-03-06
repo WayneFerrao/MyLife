@@ -4,6 +4,7 @@ Provides endpoints to store, search, and delete personal notes backed by
 Qdrant vector search and Ollama embeddings.
 """
 
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from .services import (
     COLLECTION,
     OLLAMA_URL,
     QDRANT_URL,
+    SCORE_THRESHOLD,
     SEED_NOTES,
     build_qdrant_filter,
     embed,
@@ -127,13 +129,19 @@ async def ingest(req: IngestRequest):
     Raises:
         httpx.HTTPStatusError: If Qdrant upsert fails.
     """
-    try:
-        metadata = await extract_metadata(req.text)
-    except Exception:
-        log.warning("Metadata extraction failed, using fallback")
-        metadata = {"topic": "unknown", "tags": []}
+    log.info("Ingest: %s", req.text[:200])
 
-    vector = await embed(req.text, prefix="search_document")
+    async def _extract():
+        try:
+            return await extract_metadata(req.text)
+        except Exception:
+            log.warning("Metadata extraction failed, using fallback")
+            return {"topic": "unknown", "tags": []}
+
+    metadata, vector = await asyncio.gather(
+        _extract(),
+        embed(req.text, prefix="search_document"),
+    )
     point_id = str(uuid.uuid4())
     payload = {
         "text": req.text,
@@ -171,27 +179,52 @@ async def query(req: QueryRequest):
     Raises:
         httpx.HTTPStatusError: If Qdrant query fails.
     """
-    # Extract structured filters from the query (best-effort).
-    try:
-        filters = await extract_query_filters(req.text)
-        log.info("Query filters: %s", filters)
-    except Exception:
-        log.warning("Query filter extraction failed, using pure vector search")
-        filters = {}
+    log.info("Query: %s (limit=%d)", req.text[:200], req.limit)
 
-    vector = await embed(req.text, prefix="search_query")
+    # Run filter extraction and embedding in parallel to cut latency.
+    # Filter extraction is best-effort — falls back to pure vector search.
+    async def _extract_filters():
+        try:
+            f = await extract_query_filters(req.text)
+            log.info("Query filters: %s", f)
+            return f
+        except Exception as e:
+            log.warning("Query filter extraction failed (%s: %s), using pure vector search", type(e).__name__, e)
+            return {}
+
+    filters, vector = await asyncio.gather(
+        _extract_filters(),
+        embed(req.text, prefix="search_query"),
+    )
 
     qdrant_body: dict = {"query": vector, "with_payload": True, "limit": req.limit}
     qdrant_filter = build_qdrant_filter(filters)
     if qdrant_filter:
         qdrant_body["filter"] = qdrant_filter
+        log.info("Qdrant filter: %s", qdrant_filter)
 
     resp = await http.post(
         f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
         json=qdrant_body,
     )
     resp.raise_for_status()
-    points = resp.json().get("points", [])
+    points = resp.json().get("result", {}).get("points", [])
+
+    # If filtered search returned nothing, retry without filters so we
+    # fall back to pure vector similarity instead of returning empty.
+    if not points and qdrant_filter:
+        log.info("Filtered query returned 0 results, retrying without filter")
+        qdrant_body.pop("filter")
+        resp = await http.post(
+            f"{QDRANT_URL}/collections/{COLLECTION}/points/query",
+            json=qdrant_body,
+        )
+        resp.raise_for_status()
+        points = resp.json().get("result", {}).get("points", [])
+
+    if points:
+        scores = [p["score"] for p in points]
+        log.info("Qdrant returned %d points, scores: %s", len(points), [round(s, 3) for s in scores])
 
     results = [
         QueryResult(
@@ -201,7 +234,9 @@ async def query(req: QueryRequest):
             score=p["score"],
         )
         for p in points
+        if p["score"] >= SCORE_THRESHOLD
     ]
+    log.info("After score threshold (%.2f): %d results", SCORE_THRESHOLD, len(results))
 
     # Re-sort by time when the query implies recency/chronology.
     time_sort = filters.get("time_sort", "relevance")
@@ -227,6 +262,7 @@ async def delete_note(point_id: str):
     Raises:
         httpx.HTTPStatusError: If Qdrant delete fails.
     """
+    log.info("Delete: %s", point_id)
     resp = await http.post(
         f"{QDRANT_URL}/collections/{COLLECTION}/points/delete?wait=true",
         json={"points": [point_id]},
@@ -254,24 +290,35 @@ async def seed():
     if not ALLOW_SEED:
         raise HTTPException(status_code=403, detail="Seeding is disabled. Set ALLOW_SEED=true in .env")
 
-    results = []
-    for note in SEED_NOTES:
+    async def _process_note(note: str) -> tuple[str, dict, list[float]]:
         try:
             metadata = await extract_metadata(note)
         except Exception:
             metadata = {"topic": "seed-test-data", "tags": ["seed"]}
         vector = await embed(note, prefix="search_document")
-        point_id = str(uuid.uuid4())
-        payload = {
-            "text": note,
-            "metadata": {**metadata, "source": "seed"},
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        await http.put(
-            f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
-            json={"points": [{"id": point_id, "vector": vector, "payload": payload}]},
-        )
+        return str(uuid.uuid4()), metadata, vector
+
+    processed = await asyncio.gather(*[_process_note(note) for note in SEED_NOTES])
+
+    now = datetime.now(timezone.utc).isoformat()
+    points = []
+    results = []
+    for note, (point_id, metadata, vector) in zip(SEED_NOTES, processed):
+        points.append({
+            "id": point_id,
+            "vector": vector,
+            "payload": {
+                "text": note,
+                "metadata": {**metadata, "source": "seed"},
+                "created_at": now,
+            },
+        })
         results.append({"id": point_id, "topic": metadata.get("topic", "unknown")})
         log.info("Seeded: %s", metadata.get("topic", "unknown"))
+
+    await http.put(
+        f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
+        json={"points": points},
+    )
 
     return {"seeded": len(results), "notes": results}

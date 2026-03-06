@@ -1,0 +1,10 @@
+{
+  "name": "@openclaw/rag-memory",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenClaw plugin: personal memory via RAG vector search (Qdrant + Ollama)",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}

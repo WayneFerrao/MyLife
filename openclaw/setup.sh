@@ -3,6 +3,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+SHARED_NETWORK="mylife-shared"
+
 # ── Preflight checks ────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   echo "Error: Docker is not installed. See https://docs.docker.com/get-docker/"
@@ -14,12 +16,21 @@ if ! docker compose version &>/dev/null; then
   exit 1
 fi
 
-# Verify Ollama is reachable from inside Docker (where the gateway will run)
+# ── Verify Ollama is reachable from inside Docker ────────────────────────────
 OLLAMA_CHECK_URL="${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
 if ! docker run --rm --add-host=host.docker.internal:host-gateway curlimages/curl -sf "$OLLAMA_CHECK_URL/api/version" &>/dev/null; then
   echo "Error: Ollama is not reachable at $OLLAMA_CHECK_URL"
   echo "Make sure Ollama is installed and running. See https://ollama.com/download"
   exit 1
+fi
+
+# ── Ensure shared Docker network exists ──────────────────────────────────────
+if docker network inspect "$SHARED_NETWORK" &>/dev/null; then
+  echo "Docker network '$SHARED_NETWORK' already exists"
+else
+  echo "Creating Docker network '$SHARED_NETWORK'..."
+  docker network create "$SHARED_NETWORK"
+  echo "Created Docker network '$SHARED_NETWORK'"
 fi
 
 # ── Onboarding mode ──────────────────────────────────────────────────────────

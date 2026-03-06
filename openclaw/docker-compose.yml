@@ -13,9 +13,24 @@ services:
     volumes:
       - ${OPENCLAW_CONFIG_DIR:-./config}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR:-./workspace}:/home/node/.openclaw/workspace
+      - ${OPENCLAW_EXTENSIONS_DIR:-./extensions}:/home/node/extensions
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: node dist/index.js gateway --bind ${OPENCLAW_GATEWAY_BIND:-lan} --port 18789
+    networks:
+      - shared
+    command:
+      - sh
+      - -c
+      - |
+        for dir in /home/node/extensions/*/; do
+          if [ -f "$${dir}package.json" ] && grep -q '"dependencies"' "$${dir}package.json" 2>/dev/null; then
+            echo "[startup] installing npm deps: $$dir"
+            (cd "$$dir" && npm install --omit=dev) || true
+          fi
+          echo "[startup] installing plugin: $$dir"
+          node dist/index.js plugins install -l "$$dir" || true
+        done
+        exec node dist/index.js gateway --bind ${OPENCLAW_GATEWAY_BIND:-lan} --port 18789
     restart: unless-stopped
     init: true
     healthcheck:
@@ -23,3 +38,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
+
+networks:
+  shared:
+    name: mylife-shared
+    external: true

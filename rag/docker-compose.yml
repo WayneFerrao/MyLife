@@ -9,9 +9,16 @@ services:
       - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - shared
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:18790/health"]
       interval: 30s
       timeout: 5s
       retries: 5
+
+networks:
+  shared:
+    name: mylife-shared
+    external: true

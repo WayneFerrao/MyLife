@@ -2,6 +2,15 @@
 library/
 postgres/
 config/
-workspace/
 models/
 qdrant_data/
+
+# OpenClaw extensions — track source, ignore installed deps
+openclaw/extensions/*/node_modules/
+
+# OpenClaw workspace — track templates, ignore runtime data and secrets
+openclaw/workspace/.git/
+openclaw/workspace/.openclaw/
+openclaw/workspace/skills/
+openclaw/workspace/memory/
+openclaw/workspace/MEMORY.md
